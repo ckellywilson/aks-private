@@ -1,0 +1,34 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+tfplan
+*.tfplan
+crash.log
+*.tfvars.backup
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Binary files and executables
+binaries/
+
+# Backend configuration (contains sensitive info)
+backend-config.txt
+
+# Local environment files
+.env
+.env.local

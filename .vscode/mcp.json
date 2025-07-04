@@ -1,0 +1,25 @@
+{
+    "servers": {
+        "terraform-mcp-server": {
+            "command": "docker",
+            "args": [
+                "run",
+                "-i",
+                "--rm",
+                "hashicorp/terraform-mcp-server:0.1.0"
+            ]
+        },
+        "Azure MCP Server": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@azure/mcp@latest",
+                "server",
+                "start"
+            ]
+        },
+        "AKS MCP Server": {
+            "command": "/workspaces/aks-private/binaries/aks-mcp-linux-arm64"
+        }
+    }
+}
