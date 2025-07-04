@@ -12,12 +12,16 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-RESOURCE_GROUP_NAME="rg-terraform-state-dev-cus-001"
-STORAGE_ACCOUNT_NAME="staksdevcus001tfstate"
+ENVIRONMENT="${ENVIRONMENT:-dev}"
+RESOURCE_GROUP_NAME="rg-terraform-state-${ENVIRONMENT}-cus-001"
+STORAGE_ACCOUNT_NAME="staks${ENVIRONMENT}cus001tfstate"
 CONTAINER_NAME="terraform-state"
 LOCATION="Central US"
+FORCE_RECREATE="${FORCE_RECREATE:-false}"
 
 echo -e "${YELLOW}Setting up Azure Storage backend for Terraform state...${NC}"
+echo "Environment: ${ENVIRONMENT}"
+echo "Force Recreate: ${FORCE_RECREATE}"
 
 # Check if Azure CLI is installed and user is logged in
 if ! command -v az &> /dev/null; then
@@ -33,6 +37,26 @@ fi
 # Show current subscription
 echo -e "${YELLOW}Current Azure subscription:${NC}"
 az account show --query '{name:name, id:id}' -o table
+
+# Check for existing resources
+echo -e "${YELLOW}Checking for existing resources...${NC}"
+
+RG_EXISTS=$(az group exists --name "$RESOURCE_GROUP_NAME" || echo "false")
+if [ "$RG_EXISTS" == "true" ]; then
+    echo -e "${GREEN}✅ Resource group already exists: ${RESOURCE_GROUP_NAME}${NC}"
+    if [ "$FORCE_RECREATE" == "true" ]; then
+        echo -e "${YELLOW}⚠️  Force recreate enabled - will update existing resources${NC}"
+    fi
+else
+    echo -e "${YELLOW}📦 Resource group will be created: ${RESOURCE_GROUP_NAME}${NC}"
+fi
+
+SA_EXISTS=$(az storage account check-name --name "$STORAGE_ACCOUNT_NAME" --query 'nameAvailable' -o tsv || echo "true")
+if [ "$SA_EXISTS" == "false" ]; then
+    echo -e "${GREEN}✅ Storage account already exists: ${STORAGE_ACCOUNT_NAME}${NC}"
+else
+    echo -e "${YELLOW}📦 Storage account will be created: ${STORAGE_ACCOUNT_NAME}${NC}"
+fi
 
 # Create resource group
 echo -e "${YELLOW}Creating resource group: ${RESOURCE_GROUP_NAME}${NC}"
@@ -85,7 +109,7 @@ cat > backend-config.txt << EOF
 resource_group_name  = "$RESOURCE_GROUP_NAME"
 storage_account_name = "$STORAGE_ACCOUNT_NAME"
 container_name       = "$CONTAINER_NAME"
-key                  = "dev.tfstate"
+key                  = "${ENVIRONMENT}.tfstate"
 EOF
 
 echo -e "${GREEN}Backend setup completed successfully!${NC}"
@@ -94,7 +118,7 @@ echo -e "${YELLOW}Backend Configuration Details:${NC}"
 echo "Resource Group: $RESOURCE_GROUP_NAME"
 echo "Storage Account: $STORAGE_ACCOUNT_NAME"
 echo "Container: $CONTAINER_NAME"
-echo "State File: dev.tfstate"
+echo "State File: ${ENVIRONMENT}.tfstate"
 echo ""
 echo -e "${YELLOW}Backend configuration saved to: backend-config.txt${NC}"
 echo ""
