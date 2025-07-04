@@ -8,7 +8,7 @@ The workflows were reporting 227+ issues, primarily due to GitHub Actions not be
 
 | Action | Old Version | New Version | Purpose |
 |--------|-------------|-------------|---------|
-| `azure/login` | `@v1` | `@v2` | Azure authentication with OIDC |
+| `azure/login` | `@v1` | `@v2.3.0` | Azure authentication with OIDC |
 | `actions/checkout` | `@v4` | `@v4` | ✅ Already latest |
 | `hashicorp/setup-terraform` | `@v3` | `@v3` | ✅ Already latest |
 | `actions/upload-artifact` | `@v4` | `@v4` | ✅ Already latest |
@@ -28,7 +28,7 @@ permissions:
 ## 🚀 Key Improvements
 
 ### 1. **Azure Login Action Updated**
-- Changed from `azure/login@v1` to `azure/login@v2` 
+- Changed from `azure/login@v1` to `azure/login@v2.3.0` 
 - Better OIDC support and federated identity handling
 - Resolves authentication token issues
 
