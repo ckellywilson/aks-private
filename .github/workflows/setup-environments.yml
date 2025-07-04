@@ -1,0 +1,179 @@
+name: 🌍 Setup GitHub Environments
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_environments:
+        description: 'Create GitHub environments'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  setup-environments:
+    name: Setup GitHub Environments
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup GitHub CLI
+        run: |
+          # GitHub CLI is pre-installed in ubuntu-latest
+          gh --version
+
+      - name: 🌍 Create Development Environment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Creating development environment..."
+          
+          # Create dev environment (no protection rules)
+          gh api repos/${{ github.repository }}/environments/dev \
+            --method PUT \
+            --field wait_timer=0 \
+            --field prevent_self_review=false \
+            --field reviewers='[]' || true
+
+      - name: 🌍 Create Staging Environment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Creating staging environment with protection rules..."
+          
+          # Create staging environment with reviewer requirement
+          gh api repos/${{ github.repository }}/environments/staging \
+            --method PUT \
+            --field wait_timer=0 \
+            --field prevent_self_review=true \
+            --field reviewers='[{"type":"User","id":${{ github.actor_id }}}]' || true
+
+      - name: 🌍 Create Production Environment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Creating production environment with strict protection rules..."
+          
+          # Create production environment with reviewer requirement and wait timer
+          gh api repos/${{ github.repository }}/environments/prod \
+            --method PUT \
+            --field wait_timer=300 \
+            --field prevent_self_review=true \
+            --field reviewers='[{"type":"User","id":${{ github.actor_id }}}]' || true
+
+      - name: 📋 Environment Setup Complete
+        run: |
+          echo "✅ GitHub environments have been configured:"
+          echo ""
+          echo "🔧 Development (dev):"
+          echo "  - No protection rules"
+          echo "  - Immediate deployment"
+          echo ""
+          echo "🧪 Staging (staging):"
+          echo "  - Requires reviewer approval"
+          echo "  - Prevent self-review enabled"
+          echo ""
+          echo "🏭 Production (prod):"
+          echo "  - Requires reviewer approval"
+          echo "  - 5-minute wait timer"
+          echo "  - Prevent self-review enabled"
+          echo ""
+          echo "Next steps:"
+          echo "1. Add Azure secrets to each environment"
+          echo "2. Run the setup-service-principal.sh script"
+          echo "3. Configure environment-specific variables"
+          echo "4. Test with the backend setup workflow"
+
+      - name: 📝 Generate Environment Configuration Guide
+        run: |
+          cat > environment-setup-guide.md << 'EOF'
+          # GitHub Environments Configuration Guide
+          
+          This guide helps you configure GitHub environments for your Terraform workflows.
+          
+          ## Environments Created
+          
+          ### 🔧 Development (dev)
+          - **Purpose**: Development and testing
+          - **Protection Rules**: None
+          - **Auto-deployment**: Enabled
+          - **Use Case**: Feature development, experiments
+          
+          ### 🧪 Staging (staging)
+          - **Purpose**: Pre-production testing
+          - **Protection Rules**: Reviewer required
+          - **Auto-deployment**: Manual approval
+          - **Use Case**: Integration testing, UAT
+          
+          ### 🏭 Production (prod)
+          - **Purpose**: Production workloads
+          - **Protection Rules**: Reviewer required + wait timer
+          - **Auto-deployment**: Manual approval with delay
+          - **Use Case**: Live applications
+          
+          ## Next Steps
+          
+          ### 1. Configure Azure Secrets
+          
+          For each environment, add these secrets:
+          - `AZURE_CREDENTIALS`
+          - `AZURE_CLIENT_ID`
+          - `AZURE_CLIENT_SECRET`
+          - `AZURE_SUBSCRIPTION_ID`
+          - `AZURE_TENANT_ID`
+          
+          ### 2. Set Environment Variables
+          
+          Configure environment-specific variables:
+          
+          **Development:**
+          ```
+          TF_VAR_environment = "dev"
+          TF_VAR_location = "Central US"
+          TF_VAR_instance = "001"
+          ```
+          
+          **Staging:**
+          ```
+          TF_VAR_environment = "staging"
+          TF_VAR_location = "East US"
+          TF_VAR_instance = "001"
+          ```
+          
+          **Production:**
+          ```
+          TF_VAR_environment = "prod"
+          TF_VAR_location = "East US 2"
+          TF_VAR_instance = "001"
+          ```
+          
+          ### 3. Configure Protection Rules
+          
+          Customize protection rules as needed:
+          - Add/remove reviewers
+          - Adjust wait timers
+          - Configure deployment branches
+          
+          ### 4. Test Deployment
+          
+          1. Run "Setup Terraform Backend" workflow for dev
+          2. Test infrastructure deployment
+          3. Repeat for staging and production
+          
+          ## Security Best Practices
+          
+          - Use separate Azure subscriptions for each environment
+          - Implement least privilege access
+          - Enable audit logging
+          - Regular security reviews
+          - Rotate credentials quarterly
+          
+          EOF
+
+      - name: 📤 Upload Environment Guide
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment-setup-guide
+          path: environment-setup-guide.md
+          retention-days: 30

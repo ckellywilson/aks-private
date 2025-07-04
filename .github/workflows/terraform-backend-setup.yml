@@ -1,0 +1,179 @@
+name: 🔧 Setup Terraform Backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to setup backend for'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      force_recreate:
+        description: 'Force recreate backend resources'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  TERRAFORM_VERSION: '1.7.0'
+
+jobs:
+  setup-backend:
+    name: Setup Azure Storage Backend
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./infra/tf
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔐 Azure Login (Federated Identity)
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔍 Verify Azure CLI Access
+        run: |
+          echo "Current Azure subscription:"
+          az account show --query '{name:name, id:id}' -o table
+          
+          echo "Available subscriptions:"
+          az account list --query '[].{name:name, id:id, isDefault:isDefault}' -o table
+
+      - name: 🏗️ Setup Terraform Backend
+        run: |
+          echo "Setting up Terraform backend for environment: ${{ github.event.inputs.environment }}"
+          
+          # Make script executable
+          chmod +x setup-backend.sh
+          
+          # Run backend setup
+          ./setup-backend.sh
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          FORCE_RECREATE: ${{ github.event.inputs.force_recreate }}
+
+      - name: 📋 Capture Backend Configuration
+        id: backend-config
+        run: |
+          if [ -f backend-config.txt ]; then
+            echo "Backend configuration created successfully"
+            cat backend-config.txt
+            
+            # Extract values for outputs
+            RG_NAME=$(grep "resource_group_name" backend-config.txt | cut -d'"' -f2)
+            SA_NAME=$(grep "storage_account_name" backend-config.txt | cut -d'"' -f2)
+            CONTAINER_NAME=$(grep "container_name" backend-config.txt | cut -d'"' -f2)
+            
+            echo "resource_group_name=${RG_NAME}" >> $GITHUB_OUTPUT
+            echo "storage_account_name=${SA_NAME}" >> $GITHUB_OUTPUT
+            echo "container_name=${CONTAINER_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Backend configuration file not found"
+            exit 1
+          fi
+
+      - name: 🔐 Store Backend Configuration
+        run: |
+          echo "Backend setup completed for ${{ github.event.inputs.environment }}"
+          echo "Resource Group: ${{ steps.backend-config.outputs.resource_group_name }}"
+          echo "Storage Account: ${{ steps.backend-config.outputs.storage_account_name }}"
+          echo "Container: ${{ steps.backend-config.outputs.container_name }}"
+
+      - name: 📤 Upload Backend Config as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-config-${{ github.event.inputs.environment }}
+          path: ./infra/tf/backend-config.txt
+          retention-days: 30
+
+  verify-backend:
+    name: Verify Backend Setup
+    runs-on: ubuntu-latest
+    needs: setup-backend
+    environment: ${{ github.event.inputs.environment }}
+    
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./infra/tf
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: 📥 Download Backend Config
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-config-${{ github.event.inputs.environment }}
+          path: ./infra/tf/
+
+      - name: 🔐 Azure Login (Federated Identity)
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🏗️ Update Backend Configuration
+        run: |
+          echo "Updating backend.tf with actual values..."
+          
+          # Read values from backend-config.txt
+          if [ -f backend-config.txt ]; then
+            RG_NAME=$(grep "resource_group_name" backend-config.txt | cut -d'"' -f2)
+            SA_NAME=$(grep "storage_account_name" backend-config.txt | cut -d'"' -f2)
+            CONTAINER_NAME=$(grep "container_name" backend-config.txt | cut -d'"' -f2)
+            KEY_NAME=$(grep "key" backend-config.txt | cut -d'"' -f2)
+            
+            # Create temporary backend.tf with actual values
+            cat > backend.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${RG_NAME}"
+              storage_account_name = "${SA_NAME}"
+              container_name       = "${CONTAINER_NAME}"
+              key                  = "${KEY_NAME}"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+            
+            echo "✅ Backend configuration updated"
+            cat backend.tf
+          else
+            echo "❌ Backend configuration file not found"
+            exit 1
+          fi
+
+      - name: 🚀 Initialize Terraform
+        run: |
+          echo "Initializing Terraform with backend..."
+          terraform init
+
+      - name: ✅ Verify Backend Connection
+        run: |
+          echo "Verifying Terraform backend connection..."
+          terraform workspace list
+          
+          echo "✅ Backend verification completed successfully!"
+          echo "Your Terraform backend is ready for infrastructure deployment."
