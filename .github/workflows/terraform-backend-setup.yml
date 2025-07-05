@@ -165,7 +165,6 @@ jobs:
               storage_account_name = "${SA_NAME}"
               container_name       = "${CONTAINER_NAME}"
               key                  = "${KEY_NAME}"
-              use_azuread_auth     = true
             }
           }
           EOF

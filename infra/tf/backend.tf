@@ -7,6 +7,5 @@
 #     storage_account_name = "st37921tfstate"
 #     container_name       = "terraform-state"
 #     key                  = "dev.tfstate"
-#     use_azuread_auth     = true
 #   }
 # }
