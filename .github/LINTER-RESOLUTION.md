@@ -47,6 +47,12 @@ permissions:
 - Both jobs in terraform-backend-setup now have proper OIDC permissions
 - Added debugging steps to help troubleshoot authentication issues
 
+### 5. **Azure CLI Authentication Method Fix**
+- Removed `use_azuread_auth = true` from backend configurations
+- This setting caused "Azure CLI is only supported as a User" error
+- With federated identity, Azure CLI auth is treated as service principal
+- Terraform now uses default Azure CLI authentication method
+
 ## 🛠️ Development Environment Notes
 
 The "Unable to resolve action" errors you see in the linter are expected in development environments that don't have internet access to GitHub's action marketplace. These errors will **not** occur when the workflows run in GitHub Actions because:
