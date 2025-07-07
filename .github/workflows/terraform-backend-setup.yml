@@ -121,6 +121,36 @@ jobs:
             --query "[].{Role:roleDefinitionName, Scope:scope}" \
             --output table || true
 
+      - name: 📊 Setup Azure Monitor Diagnostics Info
+        run: |
+          echo "=== Azure Monitor Diagnostics Information ==="
+          
+          # Check if diagnostic settings were created
+          echo "Checking diagnostic settings for storage account..."
+          az monitor diagnostic-settings list \
+            --resource "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/rg-terraform-state-${{ github.event.inputs.environment }}-cus-001/providers/Microsoft.Storage/storageAccounts/staks${{ github.event.inputs.environment }}cus001tfstate" \
+            --query "[].{Name:name, WorkspaceId:workspaceId}" \
+            --output table || echo "No diagnostic settings found"
+          
+          echo ""
+          echo "=== How to Monitor Authentication Issues ==="
+          echo "If you experience authentication errors, you can query Azure Monitor logs:"
+          echo ""
+          echo "📋 Storage Blob Authentication Errors:"
+          echo "StorageBlobLogs"
+          echo "| where TimeGenerated > ago(1h)"
+          echo "| where StatusCode >= 400"
+          echo "| where StatusCode in (401, 403)"
+          echo "| project TimeGenerated, StatusCode, StatusText, CallerIpAddress, AuthenticationType, RequesterObjectId"
+          echo ""
+          echo "📋 Storage Account Access Logs:"
+          echo "StorageAccountLogs"
+          echo "| where TimeGenerated > ago(1h)" 
+          echo "| where StatusCode >= 400"
+          echo "| project TimeGenerated, StatusCode, OperationName, CallerIpAddress, AuthenticationType"
+          echo ""
+          echo "💡 These queries will help identify authentication failures and their causes."
+
       - name: 📋 Capture Backend Configuration
         id: backend-config
         run: |
@@ -240,6 +270,63 @@ jobs:
         run: |
           echo "Waiting 30 seconds for RBAC permissions to propagate..."
           sleep 30
+
+      - name: 🧪 Test Storage Account Connectivity
+        run: |
+          echo "Testing storage account connectivity and permissions..."
+          
+          # Read values from backend-config.txt
+          if [ -f backend-config.txt ]; then
+            SA_NAME=$(grep "storage_account_name" backend-config.txt | cut -d'"' -f2)
+            CONTAINER_NAME=$(grep "container_name" backend-config.txt | cut -d'"' -f2)
+            
+            echo "Testing access to storage account: $SA_NAME"
+            echo "Testing access to container: $CONTAINER_NAME"
+            
+            # Test 1: Can we list containers?
+            echo "📋 Test 1: Listing containers..."
+            az storage container list \
+              --account-name "$SA_NAME" \
+              --auth-mode login \
+              --output table || echo "❌ Failed to list containers"
+            
+            # Test 2: Can we access the specific container?
+            echo "📋 Test 2: Checking container properties..."
+            az storage container show \
+              --name "$CONTAINER_NAME" \
+              --account-name "$SA_NAME" \
+              --auth-mode login \
+              --output table || echo "❌ Failed to access container"
+            
+            # Test 3: Can we list blobs (this is what Terraform does)?
+            echo "📋 Test 3: Listing blobs in container..."
+            az storage blob list \
+              --container-name "$CONTAINER_NAME" \
+              --account-name "$SA_NAME" \
+              --auth-mode login \
+              --output table || echo "❌ Failed to list blobs (this is likely the Terraform issue)"
+            
+            # Test 4: Try to create a test blob
+            echo "📋 Test 4: Testing blob write access..."
+            echo "test-connectivity" | az storage blob upload \
+              --container-name "$CONTAINER_NAME" \
+              --account-name "$SA_NAME" \
+              --name "connectivity-test.txt" \
+              --auth-mode login \
+              --overwrite true || echo "❌ Failed to write test blob"
+            
+            # Clean up test blob
+            az storage blob delete \
+              --container-name "$CONTAINER_NAME" \
+              --account-name "$SA_NAME" \
+              --name "connectivity-test.txt" \
+              --auth-mode login || echo "⚠️ Could not clean up test blob"
+            
+            echo "✅ Storage connectivity tests completed"
+          else
+            echo "❌ Backend configuration file not found"
+            exit 1
+          fi
 
       - name: 🏗️ Update Backend Configuration
         run: |

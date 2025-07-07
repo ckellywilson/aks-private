@@ -96,6 +96,78 @@ az storage container create \
     --auth-mode login \
     --output table || true
 
+# Enable diagnostic logging for authentication troubleshooting
+echo -e "${YELLOW}Enabling Azure Monitor diagnostic logging...${NC}"
+LOG_ANALYTICS_WORKSPACE_ID=$(az monitor log-analytics workspace list \
+    --query "[0].id" -o tsv 2>/dev/null || echo "")
+
+if [ -n "$LOG_ANALYTICS_WORKSPACE_ID" ]; then
+    echo "Found Log Analytics workspace: $LOG_ANALYTICS_WORKSPACE_ID"
+    
+    # Create diagnostic setting for storage account
+    az monitor diagnostic-settings create \
+        --name "terraform-backend-diagnostics" \
+        --resource "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$RESOURCE_GROUP_NAME/providers/Microsoft.Storage/storageAccounts/$STORAGE_ACCOUNT_NAME" \
+        --workspace "$LOG_ANALYTICS_WORKSPACE_ID" \
+        --logs '[
+            {
+                "category": "StorageRead",
+                "enabled": true,
+                "retentionPolicy": {"enabled": false, "days": 0}
+            },
+            {
+                "category": "StorageWrite", 
+                "enabled": true,
+                "retentionPolicy": {"enabled": false, "days": 0}
+            },
+            {
+                "category": "StorageDelete",
+                "enabled": true,
+                "retentionPolicy": {"enabled": false, "days": 0}
+            }
+        ]' \
+        --metrics '[
+            {
+                "category": "Transaction",
+                "enabled": true,
+                "retentionPolicy": {"enabled": false, "days": 0}
+            }
+        ]' \
+        --output table || echo "⚠️ Could not create diagnostic settings (may already exist)"
+    
+    # Also enable blob service diagnostics
+    az monitor diagnostic-settings create \
+        --name "terraform-backend-blob-diagnostics" \
+        --resource "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$RESOURCE_GROUP_NAME/providers/Microsoft.Storage/storageAccounts/$STORAGE_ACCOUNT_NAME/blobServices/default" \
+        --workspace "$LOG_ANALYTICS_WORKSPACE_ID" \
+        --logs '[
+            {
+                "category": "StorageRead",
+                "enabled": true,
+                "retentionPolicy": {"enabled": false, "days": 0}
+            },
+            {
+                "category": "StorageWrite",
+                "enabled": true, 
+                "retentionPolicy": {"enabled": false, "days": 0}
+            },
+            {
+                "category": "StorageDelete",
+                "enabled": true,
+                "retentionPolicy": {"enabled": false, "days": 0}
+            }
+        ]' \
+        --output table || echo "⚠️ Could not create blob diagnostic settings (may already exist)"
+    
+    echo -e "${GREEN}✅ Diagnostic logging enabled for authentication troubleshooting${NC}"
+    echo -e "${YELLOW}📋 You can query logs in Azure Monitor with:${NC}"
+    echo "StorageBlobLogs | where TimeGenerated > ago(1h) | where StatusCode >= 400"
+    echo "StorageAccountLogs | where TimeGenerated > ago(1h) | where StatusCode >= 400"
+else
+    echo -e "${YELLOW}⚠️ No Log Analytics workspace found - creating basic logging${NC}"
+    echo -e "${YELLOW}💡 Consider creating a Log Analytics workspace for better diagnostics${NC}"
+fi
+
 # Create backend configuration file
 echo -e "${YELLOW}Creating backend configuration...${NC}"
 cat > backend-config.txt << EOF
