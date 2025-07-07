@@ -208,6 +208,39 @@ jobs:
           echo "ARM_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
           echo "ARM_USE_OIDC=true" >> $GITHUB_ENV
 
+      - name: 🔍 Debug Authentication Context
+        run: |
+          echo "=== Authentication Debug Information ==="
+          echo "Service Principal ID: ${{ secrets.AZURE_CLIENT_ID }}"
+          echo "Tenant ID: ${{ secrets.AZURE_TENANT_ID }}"
+          echo "Subscription ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          echo "Current Azure CLI context:"
+          az account show --query '{name:name, id:id, user:user}' -o table
+          
+          echo "=== Testing Storage Account Access ==="
+          # Test basic storage account access
+          az storage account show \
+            --name "staks${{ github.event.inputs.environment }}cus001tfstate" \
+            --resource-group "rg-terraform-state-${{ github.event.inputs.environment }}-cus-001" \
+            --query '{name:name, id:id, allowSharedKeyAccess:allowSharedKeyAccess}' -o table || true
+          
+          echo "=== Current Role Assignments ==="
+          STORAGE_ACCOUNT_ID=$(az storage account show \
+            --name "staks${{ github.event.inputs.environment }}cus001tfstate" \
+            --resource-group "rg-terraform-state-${{ github.event.inputs.environment }}-cus-001" \
+            --query "id" -o tsv)
+          
+          az role assignment list \
+            --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+            --scope "$STORAGE_ACCOUNT_ID" \
+            --query "[].{Role:roleDefinitionName, Scope:scope, PrincipalType:principalType}" \
+            --output table || true
+
+      - name: ⏱️ Wait for Permission Propagation
+        run: |
+          echo "Waiting 30 seconds for RBAC permissions to propagate..."
+          sleep 30
+
       - name: 🏗️ Update Backend Configuration
         run: |
           echo "Updating backend.tf with actual values..."
@@ -239,10 +272,88 @@ jobs:
             exit 1
           fi
 
+      - name: 🧪 Test Storage Account Access
+        run: |
+          echo "Testing storage account access before Terraform init..."
+          
+          # Get storage account details
+          STORAGE_ACCOUNT_NAME=$(grep "storage_account_name" backend-config.txt | cut -d'"' -f2)
+          CONTAINER_NAME=$(grep "container_name" backend-config.txt | cut -d'"' -f2)
+          
+          echo "Storage Account: $STORAGE_ACCOUNT_NAME"
+          echo "Container: $CONTAINER_NAME"
+          
+          # Test if we can list containers (this is what Terraform tries to do)
+          echo "Testing container listing with Azure CLI..."
+          az storage container list \
+            --account-name "$STORAGE_ACCOUNT_NAME" \
+            --auth-mode login \
+            --query "[].{name:name, lastModified:properties.lastModified}" \
+            --output table || {
+              echo "❌ Failed to list containers with Azure CLI"
+              echo "This indicates a permission issue that will affect Terraform"
+            }
+          
+          # Test blob listing in the specific container
+          echo "Testing blob listing in terraform-state container..."
+          az storage blob list \
+            --account-name "$STORAGE_ACCOUNT_NAME" \
+            --container-name "$CONTAINER_NAME" \
+            --auth-mode login \
+            --query "[].{name:name, lastModified:properties.lastModified}" \
+            --output table || {
+              echo "⚠️ Could not list blobs in container (may be empty or permission issue)"
+            }
+
       - name: 🚀 Initialize Terraform
         run: |
           echo "Initializing Terraform with backend..."
-          terraform init
+          echo "Using ARM environment variables for authentication:"
+          echo "ARM_CLIENT_ID: ${ARM_CLIENT_ID:+SET}"
+          echo "ARM_TENANT_ID: ${ARM_TENANT_ID:+SET}" 
+          echo "ARM_SUBSCRIPTION_ID: ${ARM_SUBSCRIPTION_ID:+SET}"
+          echo "ARM_USE_OIDC: ${ARM_USE_OIDC}"
+          
+          # Try with enhanced logging
+          export TF_LOG=DEBUG
+          export TF_LOG_PATH=terraform-init.log
+          
+          terraform init -input=false || {
+            echo "❌ Terraform init failed. Checking logs..."
+            if [ -f terraform-init.log ]; then
+              echo "=== Terraform Debug Log (last 50 lines) ==="
+              tail -50 terraform-init.log
+            fi
+            
+            echo "=== Trying alternative backend configuration ==="
+            # Create alternative backend without use_azuread_auth
+            RG_NAME=$(grep "resource_group_name" backend-config.txt | cut -d'"' -f2)
+            SA_NAME=$(grep "storage_account_name" backend-config.txt | cut -d'"' -f2)
+            CONTAINER_NAME=$(grep "container_name" backend-config.txt | cut -d'"' -f2)
+            KEY_NAME=$(grep "key" backend-config.txt | cut -d'"' -f2)
+            
+            cat > backend-alternative.tf << EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${RG_NAME}"
+              storage_account_name = "${SA_NAME}"
+              container_name       = "${CONTAINER_NAME}"
+              key                  = "${KEY_NAME}"
+            }
+          }
+          EOF
+            
+            echo "Trying with alternative backend config (ARM env vars only)..."
+            rm -f backend.tf
+            mv backend-alternative.tf backend.tf
+            cat backend.tf
+            
+            terraform init -input=false || {
+              echo "❌ Both authentication methods failed"
+              echo "This suggests a deeper permission or configuration issue"
+              exit 1
+            }
+          }
 
       - name: ✅ Verify Backend Connection
         run: |
