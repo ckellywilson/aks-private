@@ -1,0 +1,231 @@
+name: 🔧 Fix Service Principal Permissions
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to fix permissions for'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      confirm:
+        description: 'Confirm you want to grant User Access Administrator privileges'
+        required: true
+        default: false
+        type: boolean
+
+env:
+  TERRAFORM_VERSION: 1.7.0
+
+jobs:
+  fix-permissions:
+    name: "Fix Permissions for ${{ inputs.environment }}"
+    runs-on: ubuntu-latest
+    
+    # This workflow requires elevated permissions to grant roles
+    # Run only when explicitly confirmed
+    if: ${{ inputs.confirm == true }}
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: "📥 Checkout Repository"
+        uses: actions/checkout@v4
+
+      - name: "🔐 Azure Login (Elevated Account)"
+        uses: azure/login@v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: "⚠️ Permission Fix Warning"
+        run: |
+          echo "🚨 IMPORTANT: This workflow will grant elevated permissions to the service principal"
+          echo "📝 Permissions to be granted:"
+          echo "   - User Access Administrator (subscription level)"
+          echo "   - Storage Blob Data Owner (storage account level)"
+          echo "   - Reader (storage account level)"
+          echo ""
+          echo "🔐 Service Principal: ${{ secrets.AZURE_CLIENT_ID }}"
+          echo "📊 Subscription: ${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          echo "🌍 Environment: ${{ inputs.environment }}"
+          echo ""
+
+      - name: "🔍 Verify Current User Privileges"
+        run: |
+          echo "Verifying current user has sufficient privileges..."
+          
+          CURRENT_USER=$(az account show --query user.name -o tsv)
+          echo "Current user: $CURRENT_USER"
+          
+          # Check if current user can manage role assignments
+          echo "Testing role assignment permissions..."
+          if az role assignment list --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" --query "[0]" -o tsv >/dev/null 2>&1; then
+            echo "✅ Current user has permission to manage role assignments"
+          else
+            echo "❌ Current user does not have permission to manage role assignments"
+            echo "Please ensure the service principal has Owner or User Access Administrator role"
+            exit 1
+          fi
+
+      - name: "🎯 Grant User Access Administrator Role"
+        run: |
+          echo "Granting User Access Administrator role to service principal..."
+          
+          # Check if role already exists
+          if az role assignment list \
+            --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+            --role "User Access Administrator" \
+            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "[0]" -o tsv >/dev/null 2>&1; then
+            echo "✅ User Access Administrator role already exists"
+          else
+            echo "🔄 Creating User Access Administrator role assignment..."
+            az role assignment create \
+              --role "User Access Administrator" \
+              --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+              --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+              --output none
+            echo "✅ User Access Administrator role granted"
+          fi
+
+      - name: "🔍 Verify Contributor Role"
+        run: |
+          echo "Verifying Contributor role exists..."
+          
+          if az role assignment list \
+            --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+            --role "Contributor" \
+            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "[0]" -o tsv >/dev/null 2>&1; then
+            echo "✅ Contributor role already exists"
+          else
+            echo "🔄 Creating Contributor role assignment..."
+            az role assignment create \
+              --role "Contributor" \
+              --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+              --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+              --output none
+            echo "✅ Contributor role granted"
+          fi
+
+      - name: "🗄️ Fix Storage Account Permissions"
+        run: |
+          echo "Fixing storage account permissions..."
+          
+          RG_NAME="rg-terraform-state-${{ inputs.environment }}-cus-001"
+          SA_NAME="staksdevcus001tfstate"
+          
+          echo "Resource Group: $RG_NAME"
+          echo "Storage Account: $SA_NAME"
+          
+          # Check if storage account exists
+          if az storage account show --name "$SA_NAME" --resource-group "$RG_NAME" >/dev/null 2>&1; then
+            echo "✅ Storage account found: $SA_NAME"
+            
+            STORAGE_ACCOUNT_ID=$(az storage account show \
+              --name "$SA_NAME" \
+              --resource-group "$RG_NAME" \
+              --query "id" -o tsv)
+            
+            echo "Storage Account ID: $STORAGE_ACCOUNT_ID"
+            
+            # Grant Storage Blob Data Owner role
+            echo "🔄 Granting Storage Blob Data Owner role..."
+            if az role assignment create \
+              --role "Storage Blob Data Owner" \
+              --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+              --scope "$STORAGE_ACCOUNT_ID" \
+              --output none 2>/dev/null; then
+              echo "✅ Storage Blob Data Owner role granted"
+            else
+              echo "⚠️ Storage Blob Data Owner role may already exist"
+            fi
+            
+            # Grant Reader role for container listing
+            echo "🔄 Granting Reader role for container listing..."
+            if az role assignment create \
+              --role "Reader" \
+              --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+              --scope "$STORAGE_ACCOUNT_ID" \
+              --output none 2>/dev/null; then
+              echo "✅ Reader role granted"
+            else
+              echo "⚠️ Reader role may already exist"
+            fi
+            
+            # Check network access rules
+            echo "🔍 Checking storage account network access rules..."
+            DEFAULT_ACTION=$(az storage account show \
+              --name "$SA_NAME" \
+              --resource-group "$RG_NAME" \
+              --query "networkRuleSet.defaultAction" -o tsv)
+            
+            echo "Current default action: $DEFAULT_ACTION"
+            
+            if [[ "$DEFAULT_ACTION" == "Deny" ]]; then
+              echo "⚠️ Storage account has restrictive network rules"
+              echo "🔄 Updating network rules to allow access..."
+              az storage account update \
+                --name "$SA_NAME" \
+                --resource-group "$RG_NAME" \
+                --default-action Allow \
+                --output none
+              echo "✅ Network rules updated to allow access"
+            else
+              echo "✅ Storage account network rules allow access"
+            fi
+            
+          else
+            echo "⚠️ Storage account not found: $SA_NAME"
+            echo "ℹ️ Storage account will be created when backend setup runs"
+          fi
+
+      - name: "✅ Verify Final Permissions"
+        run: |
+          echo "Verifying final permissions..."
+          echo ""
+          
+          echo "📋 Service Principal Role Assignments:"
+          az role assignment list \
+            --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+            --query "[].{Role:roleDefinitionName, Scope:scope}" \
+            --output table
+          
+          echo ""
+          echo "🎯 Required roles checklist:"
+          
+          # Check each required role
+          ROLES=("Contributor" "User Access Administrator")
+          
+          for role in "${ROLES[@]}"; do
+            if az role assignment list \
+              --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+              --role "$role" \
+              --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+              --query "[0]" -o tsv >/dev/null 2>&1; then
+              echo "✅ $role"
+            else
+              echo "❌ $role"
+            fi
+          done
+
+      - name: "🚀 Next Steps"
+        run: |
+          echo "🎉 Permission fix completed successfully!"
+          echo ""
+          echo "📋 Next steps:"
+          echo "1. ⏱️  Wait 5-10 minutes for Azure AD role propagation"
+          echo "2. 🔄 Re-run the backend setup workflow:"
+          echo "   gh workflow run '🔧 Setup Terraform Backend' --field environment=${{ inputs.environment }}"
+          echo "3. 📊 Monitor the workflow for successful completion"
+          echo "4. 🔍 If issues persist, run the diagnostic workflow again"
+          echo ""
+          echo "📖 For detailed troubleshooting, see: PERMISSION-FIX-GUIDE.md"
