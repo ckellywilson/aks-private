@@ -75,6 +75,25 @@ jobs:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
           FORCE_RECREATE: ${{ github.event.inputs.force_recreate }}
 
+      - name: 🔐 Configure Storage Account Permissions
+        run: |
+          echo "Configuring storage account permissions for service principal..."
+          
+          # Get storage account ID
+          STORAGE_ACCOUNT_ID=$(az storage account show \
+            --name "staks${{ github.event.inputs.environment }}cus001tfstate" \
+            --resource-group "rg-terraform-state-${{ github.event.inputs.environment }}-cus-001" \
+            --query "id" -o tsv)
+          
+          # Assign Storage Blob Data Contributor role to the service principal
+          az role assignment create \
+            --role "Storage Blob Data Contributor" \
+            --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+            --scope "$STORAGE_ACCOUNT_ID" \
+            --output table || true
+          
+          echo "✅ Storage account permissions configured"
+
       - name: 📋 Capture Backend Configuration
         id: backend-config
         run: |
@@ -173,7 +192,7 @@ jobs:
             CONTAINER_NAME=$(grep "container_name" backend-config.txt | cut -d'"' -f2)
             KEY_NAME=$(grep "key" backend-config.txt | cut -d'"' -f2)
             
-            # Create temporary backend.tf with actual values
+            # Create temporary backend.tf with actual values and Azure AD auth
             cat > backend.tf << EOF
           terraform {
             backend "azurerm" {
@@ -181,11 +200,12 @@ jobs:
               storage_account_name = "${SA_NAME}"
               container_name       = "${CONTAINER_NAME}"
               key                  = "${KEY_NAME}"
+              use_azuread_auth     = true
             }
           }
           EOF
             
-            echo "✅ Backend configuration updated"
+            echo "✅ Backend configuration updated with Azure AD auth"
             cat backend.tf
           else
             echo "❌ Backend configuration file not found"

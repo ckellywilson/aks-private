@@ -76,6 +76,7 @@ az storage account create \
     --https-only true \
     --min-tls-version TLS1_2 \
     --allow-blob-public-access false \
+    --allow-shared-key-access false \
     --tags Environment=dev Project=aks-private ManagedBy=Terraform Owner="DevOps Team" CostCenter=IT-Infrastructure Purpose="Terraform State Storage" Instance=001 \
     --output table || true
 
@@ -92,13 +93,8 @@ az storage container create \
     --name "$CONTAINER_NAME" \
     --account-name "$STORAGE_ACCOUNT_NAME" \
     --public-access off \
+    --auth-mode login \
     --output table || true
-
-# Get storage account key
-STORAGE_KEY=$(az storage account keys list \
-    --resource-group "$RESOURCE_GROUP_NAME" \
-    --account-name "$STORAGE_ACCOUNT_NAME" \
-    --query '[0].value' -o tsv)
 
 # Create backend configuration file
 echo -e "${YELLOW}Creating backend configuration...${NC}"
@@ -129,8 +125,5 @@ echo "3. Run 'terraform plan' to create your deployment plan"
 echo ""
 echo -e "${YELLOW}To migrate existing local state to the backend:${NC}"
 echo "terraform init -migrate-state"
-echo ""
-echo -e "${YELLOW}Environment Variables (optional):${NC}"
-echo "export ARM_ACCESS_KEY=\"$STORAGE_KEY\""
 echo ""
 echo -e "${GREEN}Backend setup is ready for aks-private deployment!${NC}"

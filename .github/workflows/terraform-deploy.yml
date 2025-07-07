@@ -97,7 +97,7 @@ jobs:
             CONTAINER_NAME=$(grep "container_name" backend-config.txt | cut -d'"' -f2)
             KEY_NAME=$(grep "key" backend-config.txt | cut -d'"' -f2)
             
-            # Update backend.tf with actual values
+            # Update backend.tf with actual values and Azure AD auth
             cat > backend.tf << EOF
           terraform {
             backend "azurerm" {
@@ -105,11 +105,12 @@ jobs:
               storage_account_name = "${SA_NAME}"
               container_name       = "${CONTAINER_NAME}"
               key                  = "${KEY_NAME}"
+              use_azuread_auth     = true
             }
           }
           EOF
             
-            echo "✅ Backend configuration updated"
+            echo "✅ Backend configuration updated with Azure AD auth"
           else
             echo "⚠️ No backend configuration found, using local state"
             echo "Run the 'Setup Terraform Backend' workflow first for remote state"
@@ -256,7 +257,7 @@ jobs:
             CONTAINER_NAME=$(grep "container_name" backend-config.txt | cut -d'"' -f2)
             KEY_NAME=$(grep "key" backend-config.txt | cut -d'"' -f2)
             
-            # Update backend.tf with actual values
+            # Update backend.tf with actual values and Azure AD auth
             cat > backend.tf << EOF
           terraform {
             backend "azurerm" {
@@ -264,11 +265,12 @@ jobs:
               storage_account_name = "${SA_NAME}"
               container_name       = "${CONTAINER_NAME}"
               key                  = "${KEY_NAME}"
+              use_azuread_auth     = true
             }
           }
           EOF
             
-            echo "✅ Backend configuration updated"
+            echo "✅ Backend configuration updated with Azure AD auth"
           else
             echo "⚠️ No backend configuration found"
           fi
