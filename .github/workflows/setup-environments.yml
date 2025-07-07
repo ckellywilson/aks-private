@@ -8,6 +8,13 @@ on:
         required: true
         default: true
         type: boolean
+  workflow_call:
+    inputs:
+      create_environments:
+        description: 'Create GitHub environments'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   setup-environments:

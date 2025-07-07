@@ -17,6 +17,18 @@ on:
         required: false
         default: false
         type: boolean
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to setup backend for'
+        required: true
+        type: string
+        default: 'dev'
+      force_recreate:
+        description: 'Force recreate backend resources'
+        required: false
+        type: boolean
+        default: false
 
 env:
   TERRAFORM_VERSION: '1.7.0'

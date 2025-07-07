@@ -121,7 +121,7 @@ jobs:
           echo "Fixing storage account permissions..."
           
           RG_NAME="rg-terraform-state-${{ inputs.environment }}-cus-001"
-          SA_NAME="staksdevcus001tfstate"
+          SA_NAME="staks${{ inputs.environment }}cus001tfstate"
           
           echo "Resource Group: $RG_NAME"
           echo "Storage Account: $SA_NAME"

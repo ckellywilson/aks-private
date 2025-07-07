@@ -26,16 +26,33 @@ on:
         required: false
         default: false
         type: boolean
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: string
+        default: 'dev'
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        type: string
+        default: 'plan'
+      auto_approve:
+        description: 'Auto approve apply/destroy (use with caution)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   TERRAFORM_VERSION: '1.7.0'
-  TF_VAR_environment: ${{ github.event.inputs.environment || 'dev' }}
+  TF_VAR_environment: ${{ inputs.environment || 'dev' }}
 
 jobs:
   terraform-plan:
     name: 📋 Terraform Plan
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'dev' }}
+    environment: ${{ inputs.environment || 'dev' }}
     permissions:
       id-token: write
       contents: read
@@ -198,7 +215,7 @@ jobs:
     if: |
       (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') &&
       (github.event.inputs.auto_approve == 'true' || github.event_name == 'workflow_dispatch')
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ inputs.environment }}
     permissions:
       id-token: write
       contents: read

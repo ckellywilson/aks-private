@@ -69,7 +69,7 @@ jobs:
           
           echo -e "\n=== STORAGE ACCOUNT PERMISSIONS ==="
           RG_NAME="rg-terraform-state-${{ inputs.environment }}-cus-001"
-          SA_NAME="st$(echo '${{ inputs.environment }}' | tr -d '-')cus001tfstate"
+          SA_NAME="staks${{ inputs.environment }}cus001tfstate"
           
           if az group show --name "$RG_NAME" >/dev/null 2>&1; then
             echo "Resource Group exists: $RG_NAME"
@@ -143,7 +143,7 @@ jobs:
           echo "     --scope \"/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/\$RG_NAME\""
           echo ""
           echo "4. **For Storage Access (if storage account exists):**"
-          echo "   SA_NAME='st$(echo '${{ inputs.environment }}' | tr -d '-')cus001tfstate'"
+          echo "   SA_NAME='staks${{ inputs.environment }}cus001tfstate'"
           echo "   STORAGE_ID=\$(az storage account show --name \$SA_NAME --resource-group \$RG_NAME --query id -o tsv)"
           echo ""
           echo "   az role assignment create \\"
