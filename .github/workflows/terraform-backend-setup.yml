@@ -85,14 +85,41 @@ jobs:
             --resource-group "rg-terraform-state-${{ github.event.inputs.environment }}-cus-001" \
             --query "id" -o tsv)
           
+          echo "Storage Account ID: $STORAGE_ACCOUNT_ID"
+          
           # Assign Storage Blob Data Contributor role to the service principal
+          echo "Assigning Storage Blob Data Contributor role..."
           az role assignment create \
             --role "Storage Blob Data Contributor" \
             --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
             --scope "$STORAGE_ACCOUNT_ID" \
             --output table || true
           
+          # Assign Storage Blob Data Owner role for full access (needed for Terraform operations)
+          echo "Assigning Storage Blob Data Owner role..."
+          az role assignment create \
+            --role "Storage Blob Data Owner" \
+            --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+            --scope "$STORAGE_ACCOUNT_ID" \
+            --output table || true
+          
+          # Also assign Reader role to allow listing containers
+          echo "Assigning Reader role for container listing..."
+          az role assignment create \
+            --role "Reader" \
+            --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+            --scope "$STORAGE_ACCOUNT_ID" \
+            --output table || true
+          
           echo "✅ Storage account permissions configured"
+          
+          # Verify permissions
+          echo "Current role assignments for the service principal:"
+          az role assignment list \
+            --assignee "${{ secrets.AZURE_CLIENT_ID }}" \
+            --scope "$STORAGE_ACCOUNT_ID" \
+            --query "[].{Role:roleDefinitionName, Scope:scope}" \
+            --output table || true
 
       - name: 📋 Capture Backend Configuration
         id: backend-config
@@ -205,7 +232,7 @@ jobs:
           }
           EOF
             
-            echo "✅ Backend configuration updated with Azure AD auth"
+            echo "✅ Backend configuration updated with Azure AD auth and OIDC"
             cat backend.tf
           else
             echo "❌ Backend configuration file not found"
