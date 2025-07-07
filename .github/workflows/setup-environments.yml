@@ -144,14 +144,14 @@ jobs:
           **Staging:**
           ```
           TF_VAR_environment = "staging"
-          TF_VAR_location = "East US"
+          TF_VAR_location = "Central US"
           TF_VAR_instance = "001"
           ```
           
           **Production:**
           ```
           TF_VAR_environment = "prod"
-          TF_VAR_location = "East US 2"
+          TF_VAR_location = "Central US"
           TF_VAR_instance = "001"
           ```
           
