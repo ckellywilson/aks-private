@@ -214,42 +214,7 @@ jobs:
           echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
           echo "=========================================="
 
-      - name: 🔧 Initialize Terraform
-        working-directory: infra/tf
-        run: |
-          echo "=========================================="
-          echo "🔧 TERRAFORM INITIALIZATION"
-          echo "=========================================="
-          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo ""
-          
-          START_TIME=$(date +%s)
-          echo "▶️ Step 1: Running terraform init..."
-          
-          terraform init -input=false
-          
-          echo "✅ Step 1 completed: Terraform initialized"
-          echo ""
-          echo "▶️ Step 2: Checking provider versions..."
-          
-          terraform version
-          
-          echo "✅ Step 2 completed: Version check finished"
-          echo ""
-          echo "▶️ Step 3: Listing configured providers..."
-          
-          terraform providers
-          
-          END_TIME=$(date +%s)
-          DURATION=$((END_TIME - START_TIME))
-          echo ""
-          echo "✅ Step 3 completed: Provider listing finished"
-          echo "✅ Terraform initialization process completed"
-          echo "⏱️ Total execution time: ${DURATION}s"
-          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "=========================================="
-
-      - name: 🔍 Security Scan with Checkov
+      - name:  Security Scan with Checkov
         working-directory: infra/tf
         continue-on-error: true  # Don't fail the workflow for security issues
         run: |
@@ -488,18 +453,6 @@ jobs:
           echo ""
           echo "✅ Plan summary generation process completed"
           echo "⏱️ Total execution time: ${DURATION}s"
-          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "=========================================="
-          
-          Plan details are available in the workflow logs and artifacts.
-          EOF
-          fi
-          
-          END_TIME=$(date +%s)
-          DURATION=$((END_TIME - START_TIME))
-          echo ""
-          echo "✅ Plan summary generated"
-          echo "⏱️ Execution time: ${DURATION}s"
           echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
           echo "=========================================="
 
