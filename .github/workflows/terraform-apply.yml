@@ -53,22 +53,20 @@ jobs:
       environment_url: ${{ steps.deployment.outputs.environment_url }}
     
     steps:
-      - name: 📥 [1/8] Checkout Repository
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🔐 [2/8] Azure Login with OIDC
+      - name: 🔐 Azure Login with OIDC
         run: |
           echo "=========================================="
-          echo "🔐 STEP 2: AZURE OIDC AUTHENTICATION"
+          echo "🔐 AZURE OIDC AUTHENTICATION"
           echo "=========================================="
           echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "🎯 Progress: [████████████████████████░░░░░░░░░░░░░░░░░░░░] 25%"
           echo ""
           
           START_TIME=$(date +%s)
-          echo "▶️ Authenticating with Azure using OIDC..."
+          echo "▶️ Step 1: Requesting OIDC token from GitHub..."
           
-          # Get OIDC token
           OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
           
@@ -77,21 +75,34 @@ jobs:
             exit 1
           fi
           
-          # Login using OIDC
+          echo "✅ Step 1 completed: OIDC token obtained"
+          echo ""
+          echo "▶️ Step 2: Authenticating with Azure..."
+          
           az login --service-principal \
             --username ${{ secrets.AZURE_CLIENT_ID }} \
             --tenant ${{ secrets.AZURE_TENANT_ID }} \
             --allow-no-subscriptions \
             --federated-token "$OIDC_TOKEN"
           
+          echo "✅ Step 2 completed: Azure login successful"
+          echo ""
+          echo "▶️ Step 3: Setting subscription context..."
+          
           az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+          echo "✅ Step 3 completed: Subscription context set"
+          echo ""
+          echo "▶️ Step 4: Verifying authentication..."
+          
           az account show --query '{name:name, id:id, tenantId:tenantId}' -o table
           
           END_TIME=$(date +%s)
           DURATION=$((END_TIME - START_TIME))
           echo ""
-          echo "✅ Azure authentication completed"
-          echo "⏱️ Execution time: ${DURATION}s"
+          echo "✅ Step 4 completed: Authentication verified"
+          echo "✅ Azure authentication process completed"
+          echo "⏱️ Total execution time: ${DURATION}s"
           echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
           echo "=========================================="
 
