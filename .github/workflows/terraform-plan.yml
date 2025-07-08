@@ -121,6 +121,57 @@ jobs:
           terraform_version: "~1.9.0"
           terraform_wrapper: false  # Disable wrapper for cleaner output
 
+      - name: 🔧 Configure Backend & Initialize Terraform
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "🔧 TERRAFORM BACKEND & INITIALIZATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Step 1: Setting up backend configuration..."
+          
+          # Copy backend configuration for the specified environment
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+          echo "Environment: $ENV"
+          
+          if [ -f "environments/$ENV/backend.tf" ]; then
+            cp "environments/$ENV/backend.tf" .
+            echo "✅ Backend configuration copied from environments/$ENV/backend.tf"
+          else
+            echo "❌ Backend configuration not found for environment: $ENV"
+            exit 1
+          fi
+          
+          echo "✅ Step 1 completed: Backend configuration set"
+          echo ""
+          echo "▶️ Step 2: Running terraform init..."
+          
+          terraform init -input=false
+          
+          echo "✅ Step 2 completed: Terraform initialized"
+          echo ""
+          echo "▶️ Step 3: Checking provider versions..."
+          
+          terraform version
+          
+          echo "✅ Step 3 completed: Version check finished"
+          echo ""
+          echo "▶️ Step 4: Listing configured providers..."
+          
+          terraform providers
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Step 4 completed: Provider listing finished"
+          echo "✅ Terraform initialization process completed"
+          echo "⏱️ Total execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
       - name: 🔍 Validate Terraform Configuration
         id: validate
         working-directory: infra/tf
