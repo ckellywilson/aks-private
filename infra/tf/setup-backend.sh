@@ -96,6 +96,43 @@ az storage container create \
     --auth-mode login \
     --output table || true
 
+# Assign storage permissions to managed identity for OIDC access
+echo -e "${YELLOW}Assigning storage permissions to managed identity...${NC}"
+MANAGED_IDENTITY_PRINCIPAL_ID=$(az identity show \
+    --name "id-terraform-backend-${ENVIRONMENT}" \
+    --resource-group "rg-terraform-backend-${ENVIRONMENT}-cus-001" \
+    --query principalId -o tsv 2>/dev/null || echo "")
+
+if [ -n "$MANAGED_IDENTITY_PRINCIPAL_ID" ]; then
+    echo "Found managed identity principal ID: $MANAGED_IDENTITY_PRINCIPAL_ID"
+    
+    # Get storage account resource ID
+    STORAGE_ACCOUNT_ID=$(az storage account show \
+        --name "$STORAGE_ACCOUNT_NAME" \
+        --resource-group "$RESOURCE_GROUP_NAME" \
+        --query id -o tsv)
+    
+    echo "Assigning Storage Blob Data Contributor role..."
+    az role assignment create \
+        --assignee "$MANAGED_IDENTITY_PRINCIPAL_ID" \
+        --role "Storage Blob Data Contributor" \
+        --scope "$STORAGE_ACCOUNT_ID" \
+        --output table || echo "⚠️ Role assignment may already exist"
+    
+    echo "Assigning Storage Account Contributor role..."
+    az role assignment create \
+        --assignee "$MANAGED_IDENTITY_PRINCIPAL_ID" \
+        --role "Storage Account Contributor" \
+        --scope "$STORAGE_ACCOUNT_ID" \
+        --output table || echo "⚠️ Role assignment may already exist"
+    
+    echo -e "${GREEN}✅ Storage permissions assigned successfully${NC}"
+else
+    echo -e "${YELLOW}⚠️ Managed identity not found - permissions may need to be assigned manually${NC}"
+    echo "Run this command manually:"
+    echo "az role assignment create --assignee <managed-identity-principal-id> --role 'Storage Blob Data Contributor' --scope '$STORAGE_ACCOUNT_ID'"
+fi
+
 # Enable diagnostic logging for authentication troubleshooting
 echo -e "${YELLOW}Enabling Azure Monitor diagnostic logging...${NC}"
 LOG_ANALYTICS_WORKSPACE_ID=$(az monitor log-analytics workspace list \
