@@ -28,13 +28,18 @@ jobs:
     environment: ${{ github.event.inputs.environment }}
     
     steps:
-      - name: 📥 Checkout Repository
+      - name: 📥 [Step 1/14] Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🔐 Azure Login with OIDC
+      - name: 🔐 [Step 2/14] Azure Login with OIDC
         run: |
+          echo "================================================================"
+          echo "🔐 STEP 2/14: Azure Login with OIDC"
+          echo "Start Time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "================================================================"
           echo "🔐 Logging in to Azure with OIDC..."
           
+          echo "⏳ Getting OIDC token..."
           # Get OIDC token properly
           OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
@@ -43,7 +48,9 @@ jobs:
             echo "❌ Failed to get OIDC token"
             exit 1
           fi
+          echo "✅ OIDC token obtained successfully"
           
+          echo "⏳ Authenticating with Azure..."
           # Login using OIDC with the token
           az login --service-principal \
             --username ${{ secrets.AZURE_CLIENT_ID }} \
@@ -51,15 +58,26 @@ jobs:
             --allow-no-subscriptions \
             --federated-token "$OIDC_TOKEN"
           
+          echo "⏳ Setting subscription..."
           # Set subscription
           az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+          echo "✅ Step 2/14 completed at $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "================================================================"
 
-      - name: 🔍 Verify Azure Authentication
+      - name: 🔍 [Step 3/14] Verify Azure Authentication
         run: |
+          echo "================================================================"
+          echo "🔍 STEP 3/14: Verify Azure Authentication"
+          echo "Start Time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "================================================================"
           echo "🔍 Verifying Azure authentication..."
+          
+          echo "⏳ Checking authentication status..."
           az account show --query '{name:name, id:id, tenantId:tenantId}' -o table
           echo "✅ Azure authentication successful"
           
+          echo "⏳ Quick dependency warning check..."
           # Capture any dependency warnings for monitoring
           echo "🔍 Checking for dependency warnings..."
           WARNINGS_FOUND=false
@@ -70,53 +88,120 @@ jobs:
           if [ "$WARNINGS_FOUND" = true ]; then
             echo "::warning::Dependency warnings detected. Consider running the 'Dependency Warning Check' workflow for details."
           fi
-
-      - name: 🔍 Check for Dependency Warnings
-        run: |
-          echo "🔍 Quick dependency warning check..."
           
-          # Simplified dependency check
+          echo "✅ Step 3/14 completed at $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "================================================================"
+
+      - name: 🔍 [Step 4/14] Check for Dependency Warnings
+        run: |
+          echo "================================================================"
+          echo "🔍 STEP 4/14: Check for Dependency Warnings"
+          echo "Start Time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "================================================================"
+          echo "🔍 Checking for dependency warnings..."
+          
+          # Capture warnings from Azure CLI and other tools
           WARNINGS_LOG=$(mktemp)
           
-          # Quick check for pkg_resources warning
-          echo "Testing for pkg_resources deprecation..."
-          python3 -c "import warnings; warnings.simplefilter('always'); import pkg_resources" 2>&1 | grep -i "deprecated\|UserWarning" | tee -a "$WARNINGS_LOG" || true
+          echo "⏳ Testing Azure CLI for warnings..."
+          # Check Azure CLI version (quick)
+          echo "Testing Azure CLI for warnings..."
+          az version 2>&1 | grep -i "warning\|deprecated" | tee -a "$WARNINGS_LOG" || true
           
-          # Report findings
+          echo "⏳ Testing Python warnings..."
+          # Check Python warnings specifically
+          echo "Testing Python warnings..."
+          python3 -c "import warnings; warnings.simplefilter('always'); import pkg_resources" 2>&1 | grep -i "warning\|deprecated" | tee -a "$WARNINGS_LOG" || true
+          
+          echo "⏳ Detailed pkg_resources check..."
+          # Check for pkg_resources specifically
+          python3 -c "
+          import warnings
+          warnings.simplefilter('always')
+          try:
+              import pkg_resources
+              print('pkg_resources imported successfully')
+          except ImportWarning as w:
+              print(f'ImportWarning: {w}')
+          except DeprecationWarning as w:
+              print(f'DeprecationWarning: {w}')
+          except Exception as e:
+              print(f'Other warning/error: {e}')
+          " 2>&1 | tee -a "$WARNINGS_LOG"
+          
+          echo "⏳ Analyzing results..."
           if [ -s "$WARNINGS_LOG" ]; then
-            echo "⚠️ pkg_resources deprecation warning detected"
-            echo "::warning::pkg_resources deprecation warning detected. Run 'Dependency Warning Check' workflow for details."
+            echo ""
+            echo "⚠️ Dependency warnings detected:"
+            echo "=================================================="
+            cat "$WARNINGS_LOG"
+            echo "=================================================="
+            echo ""
+            echo "📋 Warning Summary:"
+            grep -c "pkg_resources" "$WARNINGS_LOG" && echo "• pkg_resources deprecation warnings found" || true
+            grep -c "setuptools" "$WARNINGS_LOG" && echo "• setuptools related warnings found" || true
+            echo ""
+            echo "💡 Recommendations:"
+            echo "• Consider pinning setuptools<81 in requirements"
+            echo "• Update Azure CLI to latest version when available"
+            echo "• Monitor Azure CLI release notes for fixes"
           else
-            echo "✅ No critical dependency warnings detected"
+            echo "✅ No dependency warnings detected"
           fi
           
           # Save warnings for artifact
           cp "$WARNINGS_LOG" dependency-warnings.txt || touch dependency-warnings.txt
 
-      - name: 🏗️ Setup Terraform Backend Storage
+      - name: 🏗️ [4/12] Setup Terraform Backend Storage
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
           FORCE_RECREATE: ${{ github.event.inputs.force_recreate }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
-          echo "🏗️ Setting up Terraform backend storage for environment: $ENVIRONMENT"
-          echo "Force recreate: $FORCE_RECREATE"
+          echo "=========================================="
+          echo "🏗️ STEP 4: TERRAFORM BACKEND STORAGE SETUP"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████░░░░░░░░░░░░░░] 33%"
+          echo ""
+          
+          echo "📋 Configuration:"
+          echo "• Environment: $ENVIRONMENT"
+          echo "• Force recreate: $FORCE_RECREATE"
+          echo "• Working directory: $(pwd)/infra/tf"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Executing backend setup script..."
           
           cd infra/tf
           chmod +x setup-backend.sh
           ./setup-backend.sh
           
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
           echo "✅ Backend storage setup completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
 
-      - name: 📤 Upload Backend Configuration
+      - name: 📤 [5/12] Upload Backend Configuration
         uses: actions/upload-artifact@v4
         with:
           name: backend-config-${{ github.event.inputs.environment }}
           path: infra/tf/backend-config.txt
           retention-days: 30
 
-      - name: 📋 Display Backend Configuration
+      - name: 📋 [6/12] Display Backend Configuration
         run: |
+          echo "=========================================="
+          echo "📋 STEP 6: BACKEND CONFIGURATION DISPLAY"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████░░░░] 50%"
+          echo ""
+          
           echo "📋 Backend Configuration Details:"
           cat infra/tf/backend-config.txt
           echo ""
@@ -124,37 +209,98 @@ jobs:
           echo "1. Update your backend.tf file with the above configuration"
           echo "2. Run 'terraform init' to initialize with the new backend"
           echo "3. Run 'terraform plan' to verify configuration"
+          echo ""
+          echo "✅ Configuration display completed"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
 
-      - name: ⏱️ Wait for Role Assignment Propagation
+      - name: ⏱️ [7/12] Wait for Role Assignment Propagation
         run: |
-          echo "⏱️ Waiting for Azure role assignments to propagate..."
-          echo "Azure AD role assignments can take up to 5 minutes to become effective."
+          echo "=========================================="
+          echo "⏱️ STEP 7: ROLE ASSIGNMENT PROPAGATION WAIT"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████████░░░░] 58%"
+          echo ""
+          
+          echo "📋 Azure Role Propagation Info:"
+          echo "• Azure AD role assignments can take up to 5 minutes to become effective"
+          echo "• Waiting 30 seconds for initial propagation"
+          echo "• This helps prevent permission-related errors in subsequent steps"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Waiting for role assignment propagation..."
           sleep 30  # Reduced from 60 to 30 seconds
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
           echo "✅ Initial wait completed"
+          echo "⏱️ Wait time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
 
-      - name: 🔍 Check Storage Account Permissions
+      - name: 🔍 [8/12] Check Storage Account Permissions
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: |
-          echo "🔍 Quick permission check for storage account..."
+          echo "=========================================="
+          echo "🔍 STEP 8: STORAGE ACCOUNT PERMISSIONS CHECK"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████████████████░░] 67%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Analyzing storage account permissions..."
           
           # Extract configuration values
           RESOURCE_GROUP=$(grep 'resource_group_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           STORAGE_ACCOUNT=$(grep 'storage_account_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           CONTAINER=$(grep 'container_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           
-          echo "📋 Configuration: $STORAGE_ACCOUNT in $RESOURCE_GROUP"
+          echo "📋 Configuration:"
+          echo "• Resource Group: $RESOURCE_GROUP"
+          echo "• Storage Account: $STORAGE_ACCOUNT"
+          echo "• Container: $CONTAINER"
+          echo ""
           
           # Get current authentication context
+          echo "🔍 Current authentication context:"
           CURRENT_USER=$(az account show --query 'user.name' -o tsv)
           SUBSCRIPTION_ID=$(az account show --query 'id' -o tsv)
-          echo "🔍 Current principal: $CURRENT_USER"
+          echo "• Current user/principal: $CURRENT_USER"
+          echo "• Subscription ID: $SUBSCRIPTION_ID"
+          
+          # Check if this is a service principal
+          USER_TYPE=$(az account show --query 'user.type' -o tsv)
+          echo "• Authentication type: $USER_TYPE"
+          
+          if [ "$USER_TYPE" = "servicePrincipal" ]; then
+            SP_OBJECT_ID=$(az ad sp show --id "$CURRENT_USER" --query 'id' -o tsv 2>/dev/null || echo "unknown")
+            echo "• Service Principal Object ID: $SP_OBJECT_ID"
+          fi
+          echo ""
           
           # Get storage account resource ID
           STORAGE_ACCOUNT_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$STORAGE_ACCOUNT"
+          echo "🏗️ Storage Account Resource ID:"
+          echo "  $STORAGE_ACCOUNT_ID"
+          echo ""
+          echo "$STORAGE_ACCOUNT_ID"
+          echo ""
           
-          # Quick check - current principal's storage permissions
-          echo "🔐 Checking storage permissions for current principal..."
+          # Check role assignments at storage account level
+          echo "🔐 Role assignments at STORAGE ACCOUNT level:"
+          az role assignment list \
+            --scope "$STORAGE_ACCOUNT_ID" \
+            --query '[].{Principal:principalName,Role:roleDefinitionName,Type:principalType,ObjectId:principalId}' \
+            -o table 2>/dev/null || echo "Could not query storage account-level roles"
+          echo ""
+          
+          # Check if current principal has storage permissions
+          echo "🔍 Checking current principal's storage permissions:"
           CURRENT_PRINCIPAL_ROLES=$(az role assignment list \
             --assignee "$CURRENT_USER" \
             --scope "$STORAGE_ACCOUNT_ID" \
@@ -162,30 +308,91 @@ jobs:
             -o tsv 2>/dev/null || echo "")
           
           if [ -n "$CURRENT_PRINCIPAL_ROLES" ]; then
-            echo "✅ Current principal has direct storage roles:"
+            echo "✅ Current principal has these roles on storage account:"
             echo "$CURRENT_PRINCIPAL_ROLES" | tr '\t' '\n' | sed 's/^/  • /'
           else
-            echo "⚠️ Current principal has no direct storage roles"
-            echo "Will check inherited permissions during access test..."
+            echo "⚠️ Current principal has no direct roles on storage account"
+            echo "Checking inherited roles from resource group and subscription..."
+            
+            # Check resource group level
+            RG_ROLES=$(az role assignment list \
+              --assignee "$CURRENT_USER" \
+              --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP" \
+              --query '[].roleDefinitionName' \
+              -o tsv 2>/dev/null || echo "")
+            
+            if [ -n "$RG_ROLES" ]; then
+              echo "📁 Resource group level roles:"
+              echo "$RG_ROLES" | tr '\t' '\n' | sed 's/^/  • /'
+            fi
+            
+            # Check subscription level 
+            SUB_ROLES=$(az role assignment list \
+              --assignee "$CURRENT_USER" \
+              --scope "/subscriptions/$SUBSCRIPTION_ID" \
+              --query '[].roleDefinitionName' \
+              -o tsv 2>/dev/null || echo "")
+            
+            if [ -n "$SUB_ROLES" ]; then
+              echo "🌐 Subscription level roles:"
+              echo "$SUB_ROLES" | tr '\t' '\n' | sed 's/^/  • /'
+            fi
           fi
           echo ""
+          
+          # Check storage account properties
+          echo "🏗️ Storage account properties:"
+          az storage account show \
+            --name "$STORAGE_ACCOUNT" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query '{
+              name: name,
+              location: location, 
+              httpsOnly: supportsHttpsTrafficOnly,
+              allowBlobPublicAccess: allowBlobPublicAccess,
+              allowSharedKeyAccess: allowSharedKeyAccess,
+              minimumTlsVersion: minimumTlsVersion
+            }' \
+            -o table
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Storage account permissions check completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
 
-      - name: 🧪 Test Backend Access
+      - name: 🧪 [9/12] Test Backend Access
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
         continue-on-error: true  # Don't fail the workflow if access tests fail
         run: |
-          echo "🧪 Testing backend storage access..."
+          echo "=========================================="
+          echo "🧪 STEP 9: BACKEND ACCESS TESTING"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████████████████████████░] 75%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Testing backend storage access..."
           
           # Extract configuration values
           RESOURCE_GROUP=$(grep 'resource_group_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           STORAGE_ACCOUNT=$(grep 'storage_account_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           CONTAINER=$(grep 'container_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           
-          echo "Testing storage account access..."
+          echo "📋 Testing Configuration:"
+          echo "• Storage Account: $STORAGE_ACCOUNT"
+          echo "• Resource Group: $RESOURCE_GROUP"
+          echo "• Container: $CONTAINER"
+          echo ""
+          
+          echo "▶️ Testing storage account access..."
           az storage account show --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query 'name' -o tsv
           
-          echo "Testing container access with Azure AD authentication (with retry)..."
+          echo "▶️ Testing container access with Azure AD authentication (with retry)..."
           
           # Retry logic for role propagation
           MAX_RETRIES=2  # Reduced from 3 to 2 retries
@@ -282,11 +489,29 @@ jobs:
               fi
             fi
           done
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Backend access testing completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
 
-      - name: 📊 Generate Backend Status Report
+      - name: 📊 [10/12] Generate Backend Status Report
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: |
+          echo "=========================================="
+          echo "📊 STEP 10: BACKEND STATUS REPORT GENERATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████████████████████████████████░] 83%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Generating comprehensive backend status report..."
+          
           # Extract configuration values
           RESOURCE_GROUP=$(grep 'resource_group_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           STORAGE_ACCOUNT=$(grep 'storage_account_name' infra/tf/backend-config.txt | cut -d'"' -f2)
@@ -355,15 +580,23 @@ jobs:
           Workflow: ${{ github.workflow }}
           Run ID: ${{ github.run_id }}
           EOF
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Backend status report generated"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
 
-      - name: 📤 Upload Backend Status Report
+      - name: 📤 [11/12] Upload Backend Status Report
         uses: actions/upload-artifact@v4
         with:
           name: backend-status-report-${{ github.event.inputs.environment }}
           path: backend-status-report-${{ github.event.inputs.environment }}.md
           retention-days: 90
 
-      - name: 📤 Upload Dependency Warnings Report
+      - name: 📤 [11/12] Upload Dependency Warnings Report
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -371,8 +604,15 @@ jobs:
           path: dependency-warnings.txt
           retention-days: 30
 
-      - name: 🎉 Setup Complete
+      - name: 🎉 [12/12] Setup Complete
         run: |
+          echo "=========================================="
+          echo "🎉 STEP 12: WORKFLOW COMPLETION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████████████████████████████████] 100%"
+          echo ""
+          
           echo "🎉 Terraform backend storage setup completed successfully!"
           echo ""
           echo "📋 Summary:"
@@ -392,3 +632,7 @@ jobs:
           echo "3. Wait 2-3 minutes for role propagation if needed"
           echo "4. Run 'terraform init' to initialize"
           echo "5. Begin your Terraform deployment"
+          echo ""
+          echo "✅ Workflow completed successfully"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
