@@ -74,7 +74,7 @@ jobs:
           
           # Add environment details
           gh api repos/${{ github.repository }}/environments --jq -r '.environments[] | 
-          "### 🌍 \(.name | ascii_upcase)
+          "### 🌍 " + (.name | ascii_upcase) + "
           - **Created:** \(.created_at)
           - **Protection Rules:** \(.protection_rules | length)
           - **Can Admins Bypass:** \(.can_admins_bypass)
@@ -122,7 +122,7 @@ jobs:
           ✅ **Protection rules**: Production has appropriate safeguards
           
           EOF
-      - name: � Upload Environment Status Report
+      - name: 📤 Upload Environment Status Report
         uses: actions/upload-artifact@v4
         with:
           name: environment-status-report
