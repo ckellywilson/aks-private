@@ -73,14 +73,26 @@ jobs:
           EOF
           
           # Add environment details
-          gh api repos/${{ github.repository }}/environments --jq -r '.environments[] | 
-          "### 🌍 " + (.name | ascii_upcase) + "
-          - **Created:** \(.created_at)
-          - **Protection Rules:** \(.protection_rules | length)
-          - **Can Admins Bypass:** \(.can_admins_bypass)
-          - **URL:** \(.html_url)
+          gh api repos/${{ github.repository }}/environments > environments.json
           
-          "' >> environment-status-report.md
+          # Process each environment
+          for env in $(jq -r '.environments[].name' environments.json); do
+            env_data=$(jq -r ".environments[] | select(.name == \"$env\")" environments.json)
+            env_upper=$(echo "$env" | tr '[:lower:]' '[:upper:]')
+            created_at=$(echo "$env_data" | jq -r '.created_at')
+            protection_rules=$(echo "$env_data" | jq -r '.protection_rules | length')
+            can_admins_bypass=$(echo "$env_data" | jq -r '.can_admins_bypass')
+            html_url=$(echo "$env_data" | jq -r '.html_url')
+            
+            cat >> environment-status-report.md << EOF
+          ### 🌍 $env_upper
+          - **Created:** $created_at
+          - **Protection Rules:** $protection_rules
+          - **Can Admins Bypass:** $can_admins_bypass
+          - **URL:** $html_url
+          
+          EOF
+          done
           
           cat >> environment-status-report.md << 'EOF'
           ## Next Steps
