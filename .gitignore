@@ -44,3 +44,7 @@ backend-config.txt
 # Local environment files
 .env
 .env.local
+
+# Workflow artifacts and temporary files
+environments.json
+environment-status-report.md
