@@ -1,35 +1,41 @@
-# AKS Private Cluster Documentation
+# Additional Documentation
 
-This directory contains documentation for the AKS private cluster deployment.
+This directory contains supplementary documentation for the AKS private cluster deployment.
 
-## Current Configuration
+## 📋 Current Configuration
 
 - **Project**: `aks-private`
-- **Environment**: `dev`
+- **Primary Environment**: `dev`
 - **Region**: `Central US` (`cus`)
 - **Instance**: `001`
 
-## Resource Naming Convention
+## 🏷️ Resource Naming Convention
 
 All resources follow Azure best practices:
 ```
 <type>-<workload>-<env>-<region>-<instance>
 ```
 
-Examples:
+**Examples**:
 - Resource Group: `rg-aks-dev-cus-001`
 - AKS Cluster: `aks-cluster-dev-cus-001`
 - Container Registry: `craksdevcus001`
 - VNet: `vnet-aks-dev-cus-001`
 
-## Deployment
+## 🗄️ Backend Storage Configuration
 
-Navigate to `/infra/tf/` directory for Terraform configuration and deployment instructions.
+Terraform state is stored in:
+- **Resource Group**: `rg-terraform-state-dev-cus-001`
+- **Storage Account**: `staksdevcus001tfstate`
+- **Container**: `terraform-state`
+- **State File**: `dev.tfstate`
 
-## Backend Storage
+## 📍 Quick Links
 
-Backend state is stored in:
-- Resource Group: `rg-terraform-state-dev-cus-001`
-- Storage Account: `staksdevcus001tfstate`
-- Container: `terraform-state`
-- State File: `dev.tfstate`
+- **Main Documentation**: [`../README.md`](../README.md)
+- **Terraform Guide**: [`../infra/tf/README.md`](../infra/tf/README.md)
+- **Scripts Documentation**: [`../scripts/README.md`](../scripts/README.md)
+
+## 💡 Additional Resources
+
+For detailed deployment instructions, architecture diagrams, and troubleshooting guides, see the main repository documentation.
