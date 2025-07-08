@@ -117,22 +117,52 @@ The Makefile handles:
 - Backend configuration
 - Plan and apply operations
 
-#### Option B: GitHub Actions Deployment (automated)
+#### Option B: GitHub Actions Deployment (recommended)
 
-1. **Trigger the plan workflow**:
-   - Go to the Actions tab in your GitHub repository
-   - Select "Terraform Plan" workflow
-   - Click "Run workflow"
-   - Choose the environment (dev, staging, prod)
+**Step 1: Plan the Infrastructure**
+1. Navigate to your GitHub repository
+2. Go to the **Actions** tab
+3. Select **"Terraform Plan"** workflow from the left sidebar
+4. Click **"Run workflow"** button
+5. Select the target environment:
+   - `dev` for development
+   - `staging` for pre-production
+   - `prod` for production
+6. Click **"Run workflow"** to start the planning process
 
-2. **Review the plan**:
-   - Check the workflow output for the Terraform plan
-   - Verify the changes are as expected
+**Step 2: Review the Plan**
+1. Wait for the workflow to complete (usually 2-5 minutes)
+2. Click on the workflow run to view details
+3. Expand the **"Terraform Plan"** step to review:
+   - Resources to be created/modified/destroyed
+   - Configuration changes
+   - Potential issues or warnings
+4. Verify the plan matches your expectations
 
-3. **Apply the changes**:
-   - If the plan looks good, run the "Terraform Apply" workflow
-   - Choose the same environment
-   - Monitor the deployment progress
+**Step 3: Apply the Changes**
+1. If the plan looks correct, go back to the **Actions** tab
+2. Select **"Terraform Apply"** workflow
+3. Click **"Run workflow"** button
+4. Select the **same environment** you used for planning
+5. Click **"Run workflow"** to start the deployment
+
+**Step 4: Monitor Deployment**
+1. Watch the workflow progress in real-time
+2. Monitor the **"Terraform Apply"** step for:
+   - Resource creation progress
+   - Any errors or warnings
+   - Completion status
+3. Deployment typically takes 10-15 minutes for AKS cluster creation
+
+**Step 5: Post-Deployment Verification**
+1. Check the workflow output for cluster details
+2. Verify resources in the Azure Portal
+3. Test connectivity using the jump VM or Azure Bastion
+
+**Environment-Specific Considerations**:
+- **Dev**: Immediate deployment, no approvals required
+- **Staging**: Requires reviewer approval before deployment
+- **Prod**: Requires reviewer approval + 5-minute wait timer
 
 #### Benefits of Each Approach
 
@@ -200,7 +230,85 @@ All resources follow Azure best practices:
 - VNet: `vnet-aks-dev-cus-001`
 - Storage Account: `staksdevcus001tfstate`
 
-## 🔄 CI/CD Workflows
+## � Deploying with GitHub Actions
+
+### Prerequisites for GitHub Actions Deployment
+
+Before using GitHub Actions, ensure the following setup is complete:
+
+1. **Azure Resources**:
+   - Terraform backend storage account created (via bootstrap script)
+   - Managed identity with appropriate permissions
+   - OIDC federation configured for GitHub
+
+2. **GitHub Secrets** (configured in environment settings):
+   ```
+   AZURE_CLIENT_ID=<managed-identity-client-id>
+   AZURE_TENANT_ID=<azure-tenant-id>
+   AZURE_SUBSCRIPTION_ID=<azure-subscription-id>
+   ```
+
+3. **GitHub Environment Variables**:
+   ```
+   TF_VAR_environment=dev|staging|prod
+   TF_VAR_location=Central US
+   TF_VAR_instance=001
+   ```
+
+### Deployment Workflow
+
+#### 1. Plan Infrastructure Changes
+```bash
+# Via GitHub UI:
+Actions → Terraform Plan → Run workflow → Select environment
+```
+
+**What happens**:
+- Authenticates to Azure using OIDC
+- Initializes Terraform with remote backend
+- Generates and displays infrastructure plan
+- Shows resources to be created/modified/destroyed
+
+#### 2. Apply Infrastructure Changes
+```bash
+# Via GitHub UI:
+Actions → Terraform Apply → Run workflow → Select same environment
+```
+
+**What happens**:
+- Authenticates to Azure using OIDC
+- Applies the planned infrastructure changes
+- Creates AKS cluster and supporting resources
+- Outputs cluster connection information
+
+### Environment Protection Rules
+
+| Environment | Protection Rules | Use Case |
+|-------------|-----------------|----------|
+| **dev** | None | Development and testing |
+| **staging** | Reviewer approval | Pre-production validation |
+| **prod** | Reviewer approval + 5min wait | Production deployments |
+
+### Monitoring Deployments
+
+**Real-time Monitoring**:
+- GitHub Actions provides live logs during deployment
+- Monitor resource creation progress
+- View any errors or warnings immediately
+
+**Post-Deployment Verification**:
+```bash
+# Check cluster status
+az aks show --resource-group rg-aks-dev-cus-001 --name aks-cluster-dev-cus-001
+
+# Get cluster credentials
+az aks get-credentials --resource-group rg-aks-dev-cus-001 --name aks-cluster-dev-cus-001
+
+# Verify cluster nodes
+kubectl get nodes
+```
+
+## �🔄 CI/CD Workflows
 
 ### Current Workflows
 - **🔍 Terraform Plan**: Validates and plans infrastructure changes
@@ -236,12 +344,79 @@ Located in [`scripts/`](scripts/) directory:
 
 ## 🆘 Troubleshooting
 
+## 🆘 Troubleshooting
+
+### GitHub Actions Issues
+
+**Authentication Failures**:
+```bash
+# Symptoms: "Failed to authenticate with Azure"
+# Solutions:
+1. Verify AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets
+2. Check OIDC federation configuration in Azure
+3. Ensure managed identity has proper permissions
+```
+
+**Terraform Backend Issues**:
+```bash
+# Symptoms: "Failed to initialize backend"
+# Solutions:
+1. Verify storage account exists: staksdevcus001tfstate
+2. Check container exists: terraform-state
+3. Verify managed identity has Storage Blob Data Contributor role
+```
+
+**Plan/Apply Failures**:
+```bash
+# Symptoms: "Terraform plan/apply failed"
+# Solutions:
+1. Check Azure resource quotas and limits
+2. Verify resource naming doesn't conflict
+3. Review Terraform state for inconsistencies
+4. Check Azure RBAC permissions for managed identity
+```
+
+**Environment Protection Issues**:
+```bash
+# Symptoms: "Deployment blocked by environment protection"
+# Solutions:
+1. Add required reviewers to environment protection settings
+2. Wait for approval before proceeding
+3. Check protection rule configuration in repository settings
+```
+
 ### Common Issues
 
 1. **Permission errors**: Ensure proper Azure RBAC roles and GitHub environment secrets
 2. **Terraform state issues**: Check backend storage account configuration
 3. **Network connectivity**: Verify private endpoint and DNS configuration
 4. **AKS access**: Use jump VM or Azure Bastion for cluster access
+
+### Quick Reference
+
+**GitHub Actions Deployment Commands**:
+```bash
+# Plan infrastructure for dev environment
+GitHub → Actions → Terraform Plan → Select "dev" → Run workflow
+
+# Apply infrastructure for dev environment  
+GitHub → Actions → Terraform Apply → Select "dev" → Run workflow
+
+# Check workflow status
+GitHub → Actions → [Workflow Name] → View run details
+```
+
+**Alternative: GitHub CLI**:
+```bash
+# Trigger plan workflow
+gh workflow run terraform-plan.yml -f environment=dev
+
+# Trigger apply workflow
+gh workflow run terraform-apply.yml -f environment=dev
+
+# Check workflow status
+gh run list --workflow=terraform-plan.yml
+```
 
 ### Getting Help
 
