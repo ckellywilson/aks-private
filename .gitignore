@@ -41,6 +41,11 @@ binaries/
 # Backend configuration (contains sensitive info)
 backend-config.txt
 
+# Setup summary files (generated during resource creation)
+*-summary.md
+terraform-backend-identity-summary.md
+backend-status-report-*.md
+
 # Local environment files
 .env
 .env.local

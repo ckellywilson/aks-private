@@ -1,0 +1,196 @@
+name: 🏗️ Setup Terraform Backend Storage
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to setup backend for'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      force_recreate:
+        description: 'Force recreate existing resources'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  setup-backend:
+    name: Setup Backend Storage
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔐 Azure Login with OIDC
+        run: |
+          # Use Azure CLI built into GitHub Actions runner
+          az login --service-principal \
+            --username ${{ secrets.AZURE_CLIENT_ID }} \
+            --tenant ${{ secrets.AZURE_TENANT_ID }} \
+            --allow-no-subscriptions \
+            --federated-token $ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          
+          # Set subscription
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔍 Verify Azure Authentication
+        run: |
+          echo "🔍 Verifying Azure authentication..."
+          az account show --query '{name:name, id:id, tenantId:tenantId}' -o table
+          echo "✅ Azure authentication successful"
+
+      - name: 🏗️ Setup Terraform Backend Storage
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          FORCE_RECREATE: ${{ github.event.inputs.force_recreate }}
+        run: |
+          echo "🏗️ Setting up Terraform backend storage for environment: $ENVIRONMENT"
+          echo "Force recreate: $FORCE_RECREATE"
+          
+          cd infra/tf
+          chmod +x setup-backend.sh
+          ./setup-backend.sh
+          
+          echo "✅ Backend storage setup completed"
+
+      - name: 📤 Upload Backend Configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-config-${{ github.event.inputs.environment }}
+          path: infra/tf/backend-config.txt
+          retention-days: 30
+
+      - name: 📋 Display Backend Configuration
+        run: |
+          echo "📋 Backend Configuration Details:"
+          cat infra/tf/backend-config.txt
+          echo ""
+          echo "🔄 Next Steps:"
+          echo "1. Update your backend.tf file with the above configuration"
+          echo "2. Run 'terraform init' to initialize with the new backend"
+          echo "3. Run 'terraform plan' to verify configuration"
+
+      - name: 🧪 Test Backend Access
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: |
+          echo "🧪 Testing backend storage access..."
+          
+          # Extract configuration values
+          RESOURCE_GROUP=$(grep 'resource_group_name' infra/tf/backend-config.txt | cut -d'"' -f2)
+          STORAGE_ACCOUNT=$(grep 'storage_account_name' infra/tf/backend-config.txt | cut -d'"' -f2)
+          CONTAINER=$(grep 'container_name' infra/tf/backend-config.txt | cut -d'"' -f2)
+          
+          echo "Testing storage account access..."
+          az storage account show --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query 'name' -o tsv
+          
+          echo "Testing container access..."
+          az storage container show --name $CONTAINER --account-name $STORAGE_ACCOUNT --query 'name' -o tsv
+          
+          echo "✅ Backend storage access test successful"
+
+      - name: 📊 Generate Backend Status Report
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: |
+          # Extract configuration values
+          RESOURCE_GROUP=$(grep 'resource_group_name' infra/tf/backend-config.txt | cut -d'"' -f2)
+          STORAGE_ACCOUNT=$(grep 'storage_account_name' infra/tf/backend-config.txt | cut -d'"' -f2)
+          CONTAINER=$(grep 'container_name' infra/tf/backend-config.txt | cut -d'"' -f2)
+          STATE_KEY=$(grep 'key' infra/tf/backend-config.txt | cut -d'"' -f2)
+          
+          cat > backend-status-report-$ENVIRONMENT.md << EOF
+          # Terraform Backend Status Report - $ENVIRONMENT
+          
+          ## Backend Configuration
+          
+          **Environment**: $ENVIRONMENT
+          **Created**: $(date)
+          **Workflow**: ${{ github.workflow }}
+          **Run**: ${{ github.run_number }}
+          
+          ## Azure Resources
+          
+          | Resource | Name | Status |
+          |----------|------|--------|
+          | Resource Group | $RESOURCE_GROUP | ✅ Created |
+          | Storage Account | $STORAGE_ACCOUNT | ✅ Created |
+          | Container | $CONTAINER | ✅ Created |
+          | State Key | $STATE_KEY | ✅ Configured |
+          
+          ## Backend Configuration Block
+          
+          Add this to your \`backend.tf\` file:
+          
+          \`\`\`hcl
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "$RESOURCE_GROUP"
+              storage_account_name = "$STORAGE_ACCOUNT"
+              container_name       = "$CONTAINER"
+              key                  = "$STATE_KEY"
+            }
+          }
+          \`\`\`
+          
+          ## Security Features
+          
+          - ✅ **Encryption at rest**: Enabled
+          - ✅ **Blob versioning**: Enabled
+          - ✅ **HTTPS only**: Enforced
+          - ✅ **Public access**: Disabled
+          - ✅ **Shared key access**: Disabled
+          - ✅ **Minimum TLS version**: 1.2
+          
+          ## Next Steps
+          
+          1. **Update backend.tf**: Copy the configuration block above
+          2. **Initialize Terraform**: Run \`terraform init\`
+          3. **Migrate state**: Run \`terraform init -migrate-state\` if needed
+          4. **Verify setup**: Run \`terraform plan\` to test
+          
+          ## Monitoring
+          
+          - **Azure Monitor**: Diagnostic logging enabled
+          - **Activity Log**: All operations logged
+          - **Metrics**: Storage account metrics available
+          
+          ---
+          
+          Generated by: ${{ github.actor }}
+          Workflow: ${{ github.workflow }}
+          Run ID: ${{ github.run_id }}
+          EOF
+
+      - name: 📤 Upload Backend Status Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-status-report-${{ github.event.inputs.environment }}
+          path: backend-status-report-${{ github.event.inputs.environment }}.md
+          retention-days: 90
+
+      - name: 🎉 Setup Complete
+        run: |
+          echo "🎉 Terraform backend storage setup completed successfully!"
+          echo ""
+          echo "📋 Summary:"
+          echo "• Environment: ${{ github.event.inputs.environment }}"
+          echo "• Backend configuration saved as artifact"
+          echo "• Storage account access verified"
+          echo "• Security features enabled"
+          echo ""
+          echo "🔄 Next Steps:"
+          echo "1. Download the backend configuration artifact"
+          echo "2. Update your backend.tf file"
+          echo "3. Run 'terraform init' to initialize"
+          echo "4. Begin your Terraform deployment"

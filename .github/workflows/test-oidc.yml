@@ -1,0 +1,72 @@
+name: 🧪 Test OIDC Authentication
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test-oidc:
+    name: Test OIDC Authentication
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔐 Test Azure Authentication
+        run: |
+          echo "🔍 Testing Azure CLI availability..."
+          az version
+          
+          echo "🔐 Testing OIDC login..."
+          # Login using OIDC with built-in support
+          az login --service-principal \
+            --username ${{ secrets.AZURE_CLIENT_ID }} \
+            --tenant ${{ secrets.AZURE_TENANT_ID }} \
+            --allow-no-subscriptions \
+            --federated-token $ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          
+          # Set subscription
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+          # Test authentication
+          echo "✅ Testing account access..."
+          az account show --query '{name:name, id:id, tenantId:tenantId}' -o table
+          
+          echo "✅ OIDC authentication successful!"
+
+      - name: 🧪 Test Permissions
+        run: |
+          echo "🧪 Testing managed identity permissions..."
+          
+          # Test listing resource groups
+          echo "Testing resource group access..."
+          az group list --query '[].name' -o table
+          
+          # Test listing storage accounts
+          echo "Testing storage account access..."
+          az storage account list --query '[].name' -o table
+          
+          echo "✅ Permission tests completed!"
+
+      - name: 📋 Summary
+        run: |
+          echo "📋 Test Summary:"
+          echo "• Environment: ${{ github.event.inputs.environment }}"
+          echo "• Azure CLI: Available"
+          echo "• OIDC Login: Successful"
+          echo "• Permissions: Verified"
+          echo "• Ready for backend setup: ✅"
