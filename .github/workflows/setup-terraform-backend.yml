@@ -73,53 +73,21 @@ jobs:
 
       - name: 🔍 Check for Dependency Warnings
         run: |
-          echo "🔍 Checking for Python dependency warnings..."
+          echo "🔍 Quick dependency warning check..."
           
-          # Capture warnings from Azure CLI and other tools
+          # Simplified dependency check
           WARNINGS_LOG=$(mktemp)
           
-          # Run some Azure CLI commands and capture warnings
-          echo "Testing Azure CLI for warnings..."
-          az version 2>&1 | grep -i "warning\|deprecated" | tee -a "$WARNINGS_LOG" || true
-          az account show --query 'id' -o tsv 2>&1 | grep -i "warning\|deprecated" | tee -a "$WARNINGS_LOG" || true
-          
-          # Check Python warnings specifically
-          echo "Testing Python warnings..."
-          python3 -c "import warnings; warnings.simplefilter('always'); import pkg_resources" 2>&1 | grep -i "warning\|deprecated" | tee -a "$WARNINGS_LOG" || true
-          
-          # Check for pkg_resources specifically
-          python3 -c "
-          import warnings
-          warnings.simplefilter('always')
-          try:
-              import pkg_resources
-              print('pkg_resources imported successfully')
-          except ImportWarning as w:
-              print(f'ImportWarning: {w}')
-          except DeprecationWarning as w:
-              print(f'DeprecationWarning: {w}')
-          except Exception as e:
-              print(f'Other warning/error: {e}')
-          " 2>&1 | tee -a "$WARNINGS_LOG"
+          # Quick check for pkg_resources warning
+          echo "Testing for pkg_resources deprecation..."
+          python3 -c "import warnings; warnings.simplefilter('always'); import pkg_resources" 2>&1 | grep -i "deprecated\|UserWarning" | tee -a "$WARNINGS_LOG" || true
           
           # Report findings
           if [ -s "$WARNINGS_LOG" ]; then
-            echo ""
-            echo "⚠️ Dependency warnings detected:"
-            echo "=================================================="
-            cat "$WARNINGS_LOG"
-            echo "=================================================="
-            echo ""
-            echo "📋 Warning Summary:"
-            grep -c "pkg_resources" "$WARNINGS_LOG" && echo "• pkg_resources deprecation warnings found" || true
-            grep -c "setuptools" "$WARNINGS_LOG" && echo "• setuptools related warnings found" || true
-            echo ""
-            echo "💡 Recommendations:"
-            echo "• Consider pinning setuptools<81 in requirements"
-            echo "• Update Azure CLI to latest version when available"
-            echo "• Monitor Azure CLI release notes for fixes"
+            echo "⚠️ pkg_resources deprecation warning detected"
+            echo "::warning::pkg_resources deprecation warning detected. Run 'Dependency Warning Check' workflow for details."
           else
-            echo "✅ No dependency warnings detected"
+            echo "✅ No critical dependency warnings detected"
           fi
           
           # Save warnings for artifact
@@ -129,6 +97,7 @@ jobs:
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
           FORCE_RECREATE: ${{ github.event.inputs.force_recreate }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
           echo "🏗️ Setting up Terraform backend storage for environment: $ENVIRONMENT"
           echo "Force recreate: $FORCE_RECREATE"
@@ -160,60 +129,32 @@ jobs:
         run: |
           echo "⏱️ Waiting for Azure role assignments to propagate..."
           echo "Azure AD role assignments can take up to 5 minutes to become effective."
-          sleep 60  # Increased initial wait
+          sleep 30  # Reduced from 60 to 30 seconds
           echo "✅ Initial wait completed"
 
       - name: 🔍 Check Storage Account Permissions
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: |
-          echo "🔍 Analyzing storage account permissions..."
+          echo "🔍 Quick permission check for storage account..."
           
           # Extract configuration values
           RESOURCE_GROUP=$(grep 'resource_group_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           STORAGE_ACCOUNT=$(grep 'storage_account_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           CONTAINER=$(grep 'container_name' infra/tf/backend-config.txt | cut -d'"' -f2)
           
-          echo "📋 Configuration:"
-          echo "• Resource Group: $RESOURCE_GROUP"
-          echo "• Storage Account: $STORAGE_ACCOUNT"
-          echo "• Container: $CONTAINER"
-          echo ""
+          echo "📋 Configuration: $STORAGE_ACCOUNT in $RESOURCE_GROUP"
           
           # Get current authentication context
-          echo "🔍 Current authentication context:"
           CURRENT_USER=$(az account show --query 'user.name' -o tsv)
           SUBSCRIPTION_ID=$(az account show --query 'id' -o tsv)
-          echo "• Current user/principal: $CURRENT_USER"
-          echo "• Subscription ID: $SUBSCRIPTION_ID"
-          echo ""
-          
-          # Check if this is a service principal
-          USER_TYPE=$(az account show --query 'user.type' -o tsv)
-          echo "• Authentication type: $USER_TYPE"
-          
-          if [ "$USER_TYPE" = "servicePrincipal" ]; then
-            SP_OBJECT_ID=$(az ad sp show --id "$CURRENT_USER" --query 'id' -o tsv 2>/dev/null || echo "unknown")
-            echo "• Service Principal Object ID: $SP_OBJECT_ID"
-          fi
-          echo ""
+          echo "🔍 Current principal: $CURRENT_USER"
           
           # Get storage account resource ID
           STORAGE_ACCOUNT_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Storage/storageAccounts/$STORAGE_ACCOUNT"
-          echo "🏗️ Storage Account Resource ID:"
-          echo "$STORAGE_ACCOUNT_ID"
-          echo ""
           
-          # Check role assignments at storage account level
-          echo "🔐 Role assignments at STORAGE ACCOUNT level:"
-          az role assignment list \
-            --scope "$STORAGE_ACCOUNT_ID" \
-            --query '[].{Principal:principalName,Role:roleDefinitionName,Type:principalType,ObjectId:principalId}' \
-            -o table 2>/dev/null || echo "Could not query storage account-level roles"
-          echo ""
-          
-          # Check if current principal has storage permissions
-          echo "🔍 Checking current principal's storage permissions:"
+          # Quick check - current principal's storage permissions
+          echo "🔐 Checking storage permissions for current principal..."
           CURRENT_PRINCIPAL_ROLES=$(az role assignment list \
             --assignee "$CURRENT_USER" \
             --scope "$STORAGE_ACCOUNT_ID" \
@@ -221,52 +162,12 @@ jobs:
             -o tsv 2>/dev/null || echo "")
           
           if [ -n "$CURRENT_PRINCIPAL_ROLES" ]; then
-            echo "✅ Current principal has these roles on storage account:"
+            echo "✅ Current principal has direct storage roles:"
             echo "$CURRENT_PRINCIPAL_ROLES" | tr '\t' '\n' | sed 's/^/  • /'
           else
-            echo "⚠️ Current principal has no direct roles on storage account"
-            echo "Checking inherited roles from resource group and subscription..."
-            
-            # Check resource group level
-            RG_ROLES=$(az role assignment list \
-              --assignee "$CURRENT_USER" \
-              --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP" \
-              --query '[].roleDefinitionName' \
-              -o tsv 2>/dev/null || echo "")
-            
-            if [ -n "$RG_ROLES" ]; then
-              echo "📁 Resource group level roles:"
-              echo "$RG_ROLES" | tr '\t' '\n' | sed 's/^/  • /'
-            fi
-            
-            # Check subscription level 
-            SUB_ROLES=$(az role assignment list \
-              --assignee "$CURRENT_USER" \
-              --scope "/subscriptions/$SUBSCRIPTION_ID" \
-              --query '[].roleDefinitionName' \
-              -o tsv 2>/dev/null || echo "")
-            
-            if [ -n "$SUB_ROLES" ]; then
-              echo "🌐 Subscription level roles:"
-              echo "$SUB_ROLES" | tr '\t' '\n' | sed 's/^/  • /'
-            fi
+            echo "⚠️ Current principal has no direct storage roles"
+            echo "Will check inherited permissions during access test..."
           fi
-          echo ""
-          
-          # Check storage account properties
-          echo "🏗️ Storage account properties:"
-          az storage account show \
-            --name "$STORAGE_ACCOUNT" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query '{
-              name: name,
-              location: location, 
-              httpsOnly: supportsHttpsTrafficOnly,
-              allowBlobPublicAccess: allowBlobPublicAccess,
-              allowSharedKeyAccess: allowSharedKeyAccess,
-              minimumTlsVersion: minimumTlsVersion
-            }' \
-            -o table
           echo ""
 
       - name: 🧪 Test Backend Access
@@ -287,7 +188,7 @@ jobs:
           echo "Testing container access with Azure AD authentication (with retry)..."
           
           # Retry logic for role propagation
-          MAX_RETRIES=3  # Reduced retries to avoid timeout
+          MAX_RETRIES=2  # Reduced from 3 to 2 retries
           RETRY_COUNT=0
           SUCCESS=false
           
@@ -364,8 +265,8 @@ jobs:
               fi
               
               if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "⏳ Access not ready yet, waiting 60 seconds before retry..."
-                sleep 60
+                echo "⏳ Access not ready yet, waiting 30 seconds before retry..."
+                sleep 30  # Reduced from 60 to 30 seconds
               else
                 echo "⚠️ Container access failed after all retries"
                 echo ""
