@@ -99,8 +99,8 @@ az storage container create \
 # Assign storage permissions to managed identity for OIDC access
 echo -e "${YELLOW}Assigning storage permissions to managed identity...${NC}"
 MANAGED_IDENTITY_PRINCIPAL_ID=$(az identity show \
-    --name "id-terraform-backend-${ENVIRONMENT}" \
-    --resource-group "rg-terraform-backend-${ENVIRONMENT}-cus-001" \
+    --name "id-terraform-backend-${ENVIRONMENT}-cus-001" \
+    --resource-group "rg-terraform-backend-identity-cus-001" \
     --query principalId -o tsv 2>/dev/null || echo "")
 
 if [ -n "$MANAGED_IDENTITY_PRINCIPAL_ID" ]; then
