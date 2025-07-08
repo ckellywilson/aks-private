@@ -59,7 +59,7 @@ write_files:
       
       ## Quick Start:
       1. Login to Azure: `az login`
-      2. Get AKS credentials: `az aks get-credentials --resource-group rg37921 --name aks37921`
+      2. Get AKS credentials: `az aks get-credentials --resource-group rg-aks-dev-cus-001 --name aks-cluster-dev-cus-001`
       3. Verify cluster access: `kubectl get nodes`
       
       ## Deploy Add-ons:

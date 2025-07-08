@@ -44,18 +44,18 @@ setup-backend: check-tools ## Setup Azure Storage backend for Terraform state
 		az group create --name rg-terraform-state --location "Central US" || true; \
 		az storage account create \
 			--resource-group rg-terraform-state \
-			--name st37921tfstate \
+			--name staksdevcus001tfstate \
 			--sku Standard_LRS \
 			--encryption-services blob \
 			--https-only true \
 			--min-tls-version TLS1_2 \
 			--allow-blob-public-access false || true; \
 		az storage account blob-service-properties update \
-			--account-name st37921tfstate \
+			--account-name staksdevcus001tfstate \
 			--enable-versioning true || true; \
 		az storage container create \
 			--name terraform-state \
-			--account-name st37921tfstate \
+			--account-name staksdevcus001tfstate \
 			--public-access off || true; \
 		echo "$(GREEN)Backend setup complete$(NC)"; \
 	fi
@@ -108,7 +108,7 @@ destroy: ## Clean up all resources
 
 get-credentials: ## Get AKS cluster credentials
 	@echo "$(YELLOW)Getting AKS credentials...$(NC)"
-	@RG_NAME=$$(terraform output -raw resource_group_name 2>/dev/null || echo "rg37921"); \
+	@RG_NAME=$$(terraform output -raw resource_group_name 2>/dev/null || echo "rg-aks-dev-cus-001"); \
 	CLUSTER_NAME=$$(terraform output -raw cluster_name 2>/dev/null || echo "aks37921"); \
 	az aks get-credentials --resource-group $$RG_NAME --name $$CLUSTER_NAME --overwrite-existing
 	@echo "$(GREEN)Credentials configured for kubectl$(NC)"

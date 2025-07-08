@@ -1,12 +1,245 @@
-# Scripts Directory
+# Terraform Backend Bootstrap
 
-Administrative scripts for AKS Private Cluster setup and management.
+This directory contains scripts and documentation for setting up the Azure storage backend for Terraform state management.
 
-## 🔐 Security Notice
+## Overview
 
-**These scripts require elevated permissions and should only be run by repository administrators.**
+The Terraform backend setup follows a **bootstrap approach** where the storage infrastructure is created once manually, and then GitHub Actions workflows handle only the Terraform plan/apply operations.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  BOOTSTRAP PHASE                           │
+│  (One-time manual setup with privileged account)          │
+├─────────────────────────────────────────────────────────────┤
+│  • Create storage account for Terraform state             │
+│  • Create managed identity for Terraform                  │
+│  • Assign minimal permissions to managed identity         │
+│  • Configure OIDC federation for GitHub Actions          │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 AUTOMATION PHASE                           │
+│     (GitHub Actions with limited permissions)             │
+├─────────────────────────────────────────────────────────────┤
+│  • terraform plan (validation workflow)                   │
+│  • terraform apply (deployment workflow)                  │
+│  • Uses pre-created backend and managed identity          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Quick Start
+
+### Prerequisites
+
+1. **Azure CLI installed** and logged in with an account that has:
+   - `Owner` role on the subscription, OR
+   - `Contributor` + `User Access Administrator` roles
+2. **Appropriate permissions** to create resources and assign roles
+
+### Bootstrap Process
+
+1. **Run the bootstrap script:**
+   ```bash
+   cd scripts
+   ./bootstrap-terraform-backend.sh
+   ```
+
+2. **Follow the interactive prompts:**
+   - Confirm your Azure subscription
+   - Select environments to set up (dev, staging, prod)
+   - Choose Azure region
+   - Optionally provide GitHub Actions service principal ID
+
+3. **Review generated files:**
+   - `infra/tf/environments/{env}/backend.tf` - Backend configuration
+   - `terraform-backend-summary-{env}.md` - Complete setup summary
+
+4. **Update GitHub Secrets:**
+   Use the values from the summary documents to update your repository secrets:
+   ```
+   AZURE_CLIENT_ID = "managed-identity-client-id"
+   AZURE_SUBSCRIPTION_ID = "subscription-id"
+   AZURE_TENANT_ID = "tenant-id"
+   ```
+
+## What Gets Created
+
+For each environment, the bootstrap script creates:
+
+### Azure Resources
+- **Resource Group**: `rg-terraform-state-{env}-cus-001`
+- **Storage Account**: `staks{env}cus001tfstate`
+- **Blob Container**: `terraform-state`
+- **Managed Identity**: `id-terraform-{env}-cus-001`
+
+### Security Configuration
+- ✅ **Encryption at rest**: Enabled by default
+- ✅ **Blob versioning**: Enabled for state file recovery
+- ✅ **HTTPS only**: Enforced
+- ✅ **Public blob access**: Disabled
+- ✅ **Shared key access**: Disabled
+- ✅ **Minimum TLS version**: 1.2
+
+### Permissions
+- **Managed Identity**: Storage Blob Data Contributor + Storage Account Contributor
+- **GitHub Actions SP** (optional): Storage Blob Data Reader + Reader (resource group scope)
+
+## File Structure
+
+```
+scripts/
+├── bootstrap-terraform-backend.sh    # Main bootstrap script
+├── assign-github-actions-permissions.sh  # Helper for GitHub Actions perms
+└── README.md                         # This file
+
+infra/tf/environments/
+├── dev/
+│   ├── backend.tf                   # Backend configuration
+│   ├── backend-config.txt           # Key-value config
+│   └── terraform.tfvars             # Environment variables
+├── staging/
+└── prod/
+
+# Generated summary documents
+terraform-backend-summary-dev.md
+terraform-backend-summary-staging.md
+terraform-backend-summary-prod.md
+```
 
 ## Scripts
+
+### `bootstrap-terraform-backend.sh`
+**Purpose**: Complete one-time setup of Terraform backend infrastructure
+
+**Features**:
+- Interactive configuration
+- Multi-environment support
+- Permission verification
+- Comprehensive error handling
+- Detailed documentation generation
+
+**Usage**:
+```bash
+./bootstrap-terraform-backend.sh
+```
+
+### `assign-github-actions-permissions.sh`
+**Purpose**: Assign additional permissions to GitHub Actions service principal
+
+**Usage**:
+```bash
+# Interactive mode
+./assign-github-actions-permissions.sh
+
+# With environment variable
+GITHUB_ACTIONS_CLIENT_ID="sp-client-id" ./assign-github-actions-permissions.sh
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### 1. Insufficient Permissions
+**Error**: `AuthorizationFailed` when creating role assignments
+
+**Solution**: Ensure your account has `Owner` or `User Access Administrator` role:
+```bash
+az role assignment list --assignee $(az account show --query user.name -o tsv) --output table
+```
+
+#### 2. Storage Account Name Conflicts
+**Error**: Storage account name already taken
+
+**Solution**: Storage account names are globally unique. The bootstrap script uses a consistent naming pattern, but you may need to modify the name if there's a conflict.
+
+#### 3. Managed Identity Not Found
+**Error**: Cannot find managed identity in GitHub Actions
+
+**Solution**: Verify the `AZURE_CLIENT_ID` secret matches the managed identity client ID from the summary document.
+
+### Verification Commands
+
+**Check backend resources**:
+```bash
+# List resource group contents
+az resource list --resource-group rg-terraform-state-dev-cus-001 --output table
+
+# Verify storage account
+az storage account show --name staksdevcus001tfstate --resource-group rg-terraform-state-dev-cus-001
+
+# Check managed identity
+az identity show --name id-terraform-dev-cus-001 --resource-group rg-terraform-state-dev-cus-001
+```
+
+**Test Terraform backend**:
+```bash
+cd infra/tf
+terraform init
+terraform plan
+```
+
+## Security Considerations
+
+### Principle of Least Privilege
+- **Bootstrap account**: Needs high privileges (Owner/User Access Admin) but only used once
+- **Managed Identity**: Has only storage permissions needed for Terraform
+- **GitHub Actions**: Has minimal read permissions for validation
+
+### Separation of Concerns
+- **Infrastructure setup** (bootstrap): Manual process with full control
+- **Application deployment** (workflows): Automated with limited permissions
+
+### Audit Trail
+- All resource creation is logged in Azure Activity Log
+- Generated summary documents provide complete audit trail
+- Version-controlled configuration files
+
+## Migration from Workflow-Based Setup
+
+If you previously used the GitHub Actions workflow for backend setup:
+
+1. **Remove the old workflow**:
+   ```bash
+   rm .github/workflows/setup-terraform-backend.yml
+   ```
+
+2. **Run the bootstrap script** to create resources properly
+
+3. **Update your GitHub secrets** with the new managed identity details
+
+4. **Test the new setup** with terraform init
+
+## Best Practices
+
+### Environment Management
+- Use consistent naming patterns across environments
+- Separate resource groups per environment
+- Use different managed identities per environment
+
+### State File Security
+- Enable blob versioning for recovery
+- Monitor access with Azure Monitor
+- Regular backup verification
+
+### Access Control
+- Regular review of role assignments
+- Use managed identities instead of service principals where possible
+- Minimal permissions for automation accounts
+
+## Support
+
+For issues or questions:
+1. Check the troubleshooting section above
+2. Review the generated summary documents
+3. Verify your Azure permissions
+4. Check Azure Activity Logs for detailed error information
+
+---
+
+**Note**: This bootstrap approach follows Azure and HashiCorp best practices for Terraform backend management in production environments.
 
 ### `check-prerequisites.sh`
 

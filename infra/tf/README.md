@@ -1,4 +1,20 @@
-# AKS Private Cluster Terraform Configuration
+# AKS Pr**Example**: `rg-aks-dev-cus-001`
+- `rg` = Resource Group
+- `aks` = Workload (matches workspace: aks-private)
+- `dev` = Environment 
+- `cus` = Central US region
+- `001` = Static instance identifier
+
+## 🏗️ Architecture Overview
+
+This configuration creates:
+
+- **Private AKS Cluster** (`aks-cluster-dev-cus-001`) with system and user node pools
+- **Azure Container Registry** (`craksdevcus001`) with private endpoint
+- **Log Analytics Workspace** (`log-aks-dev-cus-001`) for monitoring
+- **User-assigned Managed Identities** for cluster and kubelet
+- **Azure Bastion Host** (`bas-aks-dev-cus-001`) for secure access
+- **Jump VM** (`vm-jumpbox-dev-cus-001`) for kubectl operationsraform Configuration
 
 This Terraform configuration deploys a production-ready, private Azure Kubernetes Service (AKS) cluster with all necessary supporting infrastructure using Azure best practice naming conventions.
 
@@ -126,7 +142,7 @@ environment = "dev"
 location    = "Central US"
 
 # Resource Naming
-resource_group_name         = "rg37921"
+resource_group_name         = "rg-aks-dev-cus-001"
 cluster_resource_group_name = "rg-aks37921"
 cluster_name               = "aks37921"
 
@@ -175,7 +191,7 @@ The configuration creates two node pools:
 
 ```bash
 # View cluster logs in Azure portal
-az aks browse --resource-group rg37921 --name aks37921
+az aks browse --resource-group rg-aks-dev-cus-001 --name aks-cluster-dev-cus-001
 
 # Query logs with kubectl
 kubectl logs -n kube-system -l app=azure-policy
@@ -265,7 +281,7 @@ make prod-apply ENV=prod
 
 Terraform state is stored in Azure Storage:
 
-- **Storage Account**: `st37921tfstate`
+- **Storage Account**: `staksdevcus001tfstate`
 - **Container**: `terraform-state`
 - **State File**: `dev.tfstate`
 - **Features**: Encryption at rest, blob versioning, access controls
@@ -290,7 +306,7 @@ make output
 ```bash
 # Scale user node pool
 az aks nodepool scale \
-  --resource-group rg37921 \
+  --resource-group rg-aks-dev-cus-001 \
   --cluster-name aks37921 \
   --name user \
   --node-count 5

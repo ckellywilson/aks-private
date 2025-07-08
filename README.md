@@ -19,16 +19,22 @@ This repository deploys:
 
 ```
 ├── .github/workflows/          # GitHub Actions workflows
-│   └── setup-environments.yml  # Environment verification workflow
+│   ├── terraform-plan.yml      # Terraform plan workflow
+│   ├── terraform-apply.yml     # Terraform apply workflow
+│   ├── test-oidc.yml           # OIDC authentication test
+│   ├── verify-environments.yml # Environment verification workflow
+│   └── dependency-check.yml    # Dependency monitoring workflow
 ├── docs/                       # Additional documentation
 ├── infra/tf/                   # Terraform infrastructure code
 │   ├── modules/                # Reusable Terraform modules
 │   ├── main.tf                 # Main infrastructure configuration
-│   ├── variables.tf            # Input variables
+│   ├variables.tf               # Input variables
 │   ├── outputs.tf              # Output values
+│   ├── Makefile                # Local deployment automation
 │   └── README.md               # Detailed Terraform documentation
 ├── scripts/                    # Administrative scripts
-│   ├── setup-github-environments.sh  # One-time environment setup
+│   ├── bootstrap-terraform-backend.sh  # Bootstrap Terraform backend
+│   ├── setup-github-environments.sh   # One-time environment setup
 │   ├── deploy-addons.sh        # AKS add-ons deployment
 │   └── README.md               # Scripts documentation
 └── README.md                   # This file
@@ -69,14 +75,81 @@ This repository deploys:
    TF_VAR_instance = "001"
    ```
 
-### 3. Deploy Infrastructure
+### 3. Set up Terraform Backend
 
-Navigate to the Terraform directory:
+Run the bootstrap script to create the Terraform backend storage:
 ```bash
-cd infra/tf
+./scripts/bootstrap-terraform-backend.sh
 ```
 
-See [`infra/tf/README.md`](infra/tf/README.md) for detailed deployment instructions.
+This will create:
+- Azure Storage Account for Terraform state
+- Managed Identity for secure access
+- OIDC federation for GitHub Actions
+- Environment-specific backend configurations
+
+### 4. Deploy Infrastructure
+
+You can deploy the infrastructure using either method:
+
+#### Option A: Local Deployment (using Makefile)
+
+1. **Navigate to the Terraform directory**:
+   ```bash
+   cd infra/tf
+   ```
+
+2. **Deploy using Makefile**:
+   ```bash
+   # Deploy to dev environment
+   make deploy-dev
+   
+   # Deploy to staging environment
+   make deploy-staging
+   
+   # Deploy to production environment
+   make deploy-prod
+   ```
+
+The Makefile handles:
+- Environment configuration
+- Terraform initialization
+- Backend configuration
+- Plan and apply operations
+
+#### Option B: GitHub Actions Deployment (automated)
+
+1. **Trigger the plan workflow**:
+   - Go to the Actions tab in your GitHub repository
+   - Select "Terraform Plan" workflow
+   - Click "Run workflow"
+   - Choose the environment (dev, staging, prod)
+
+2. **Review the plan**:
+   - Check the workflow output for the Terraform plan
+   - Verify the changes are as expected
+
+3. **Apply the changes**:
+   - If the plan looks good, run the "Terraform Apply" workflow
+   - Choose the same environment
+   - Monitor the deployment progress
+
+#### Benefits of Each Approach
+
+**Local Deployment (Makefile)**:
+- ✅ Direct control over deployment
+- ✅ Easy for development and testing
+- ✅ Immediate feedback and troubleshooting
+- ✅ No dependency on GitHub Actions
+
+**GitHub Actions Deployment**:
+- ✅ Consistent deployment process
+- ✅ Audit trail and deployment history
+- ✅ Code review integration
+- ✅ Environment protection rules
+- ✅ Automated validation and testing
+
+For more detailed instructions, see [`infra/tf/README.md`](infra/tf/README.md).
 
 ## 🔐 Security & Best Practices
 
@@ -130,22 +203,30 @@ All resources follow Azure best practices:
 ## 🔄 CI/CD Workflows
 
 ### Current Workflows
-- **🔍 Verify GitHub Environments**: Validates environment configuration
+- **🔍 Terraform Plan**: Validates and plans infrastructure changes
+- **🚀 Terraform Apply**: Applies infrastructure changes
+- **🔐 Test OIDC**: Validates OIDC authentication setup
+- **✅ Verify GitHub Environments**: Validates environment configuration
+- **🔎 Dependency Check**: Monitors for security vulnerabilities
 
 ### Security Features
 - **Manual triggers only** (no automatic execution)
 - **Minimal permissions** (`contents: read`)
 - **Environment-based secrets** and variables
+- **OIDC authentication** (no long-lived secrets)
 - **Audit trail** through GitHub Actions logs
 
 ## 🛠️ Administrative Scripts
 
 Located in [`scripts/`](scripts/) directory:
 
+- **`bootstrap-terraform-backend.sh`**: One-time setup of Terraform backend storage (admin only)
 - **`setup-github-environments.sh`**: One-time environment setup (admin only)
 - **`deploy-addons.sh`**: Deploy AKS add-ons (nginx-ingress, cert-manager)
 
 ⚠️ **Security Note**: Admin scripts require elevated permissions and should only be run manually by repository administrators.
+
+**Setup Sequence**: Run `bootstrap-terraform-backend.sh` before any deployment to create the required storage infrastructure.
 
 ## 📚 Documentation
 
@@ -169,14 +250,16 @@ Located in [`scripts/`](scripts/) directory:
 3. Verify Azure resource configuration in the Azure Portal
 4. Check Terraform state and plan output for infrastructure drift
 
-## 🎯 Next Steps
+## 🎯 Status
 
 1. ✅ Repository structure and documentation organized
 2. ✅ Security model implemented with least privilege
 3. ✅ Environment management configured
-4. ⏳ **TODO**: Implement Terraform backend setup workflow
-5. ⏳ **TODO**: Implement infrastructure deployment workflow
-6. ⏳ **TODO**: Add monitoring and alerting configuration
+4. ✅ Terraform backend setup (bootstrap script)
+5. ✅ Infrastructure deployment workflows (both local and GitHub Actions)
+6. ✅ OIDC authentication and security hardening
+7. ⏳ **TODO**: Add monitoring and alerting configuration
+8. ⏳ **TODO**: Implement automated testing and validation
 
 ---
 

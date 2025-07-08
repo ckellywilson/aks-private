@@ -6,27 +6,36 @@ Automated workflows for AKS Private Cluster infrastructure management with secur
 
 ```mermaid
 graph TB
-    A[Prerequisites Check] --> B[GitHub Environments Setup]
+    A[Bootstrap Script] --> B[GitHub Environments Setup]
     B --> C[Managed Identity Setup]
-    C --> D[Backend Storage Workflow]
-    D --> E[Infrastructure Deployment]
+    C --> D[Terraform Workflows]
+    D --> E[AKS Infrastructure]
     E --> F[Add-ons Deployment]
+    
+    subgraph "One-Time Setup (Manual)"
+        S1[bootstrap-terraform-backend.sh]
+        S2[GitHub Environments]
+        S3[Managed Identity + OIDC]
+    end
     
     subgraph "GitHub Actions Workflows"
         W1[verify-environments.yml]
-        W2[setup-terraform-backend.yml]
-        W3[test-oidc.yml]
+        W2[test-oidc.yml]
+        W3[dependency-check.yml]
+        W4[terraform-plan.yml]
+        W5[terraform-apply.yml]
     end
     
     subgraph "Security Layer"
-        S1[OIDC Authentication]
-        S2[Managed Identity]
-        S3[Environment Secrets]
+        SEC1[OIDC Authentication]
+        SEC2[Managed Identity]
+        SEC3[Environment Secrets]
     end
     
-    W1 --> S3
-    W2 --> S1
-    W3 --> S2
+    S1 --> SEC2
+    S2 --> SEC3
+    W4 --> SEC1
+    W5 --> SEC1
 ```
 
 ## 📋 Workflow Catalog
@@ -63,52 +72,7 @@ graph TB
 
 ---
 
-### 2. `setup-terraform-backend.yml`
-**🏗️ Setup Terraform Backend Storage**
-
-**Purpose**: Creates environment-specific Azure storage accounts for Terraform state management.
-
-**Trigger**: 
-- Manual (`workflow_dispatch`)
-- **Required Parameter**: `environment` (dev, staging, prod)
-
-**Usage**:
-```yaml
-# Navigate to Actions tab in GitHub
-# Select "🏗️ Setup Terraform Backend Storage" workflow
-# Click "Run workflow" button
-# Select environment: dev, staging, or prod
-```
-
-**Prerequisites**:
-- ✅ GitHub environments created (`verify-environments.yml`)
-- ✅ Managed identity setup completed
-- ✅ Environment secrets configured:
-  - `AZURE_CLIENT_ID`
-  - `AZURE_TENANT_ID`
-  - `AZURE_SUBSCRIPTION_ID`
-
-**What it does**:
-1. 🔐 Authenticates with Azure using OIDC
-2. 🏗️ Creates resource group for backend storage
-3. 💾 Creates storage account with unique naming
-4. 🔒 Configures storage account security settings
-5. 📊 Tests backend access and permissions
-6. 📋 Generates backend configuration report
-
-**Output Artifacts**:
-- `backend-config-{environment}` - Backend configuration files
-- `backend-status-report-{environment}` - Detailed setup report
-
-**Security Features**:
-- 🔐 **OIDC Authentication** - No long-lived secrets
-- 🔒 **Environment isolation** - Separate storage per environment
-- 📋 **Audit logging** - All operations logged in Azure
-- 🛡️ **Principle of least privilege** - Minimal required permissions
-
----
-
-### 3. `test-oidc.yml`
+### 2. `test-oidc.yml`
 **🧪 Test OIDC Authentication**
 
 **Purpose**: Validates OIDC authentication and Azure permissions for each environment.
@@ -126,9 +90,11 @@ graph TB
 ```
 
 **Prerequisites**:
-- ✅ Managed identity setup completed
-- ✅ Environment secrets configured
-- ✅ OIDC federated credentials configured
+- ✅ Bootstrap script completed (`bootstrap-terraform-backend.sh`)
+- ✅ Environment secrets configured:
+  - `AZURE_CLIENT_ID`
+  - `AZURE_TENANT_ID` 
+  - `AZURE_SUBSCRIPTION_ID`
 
 **What it does**:
 1. 🔐 Tests Azure CLI authentication via OIDC
@@ -144,9 +110,144 @@ graph TB
 
 ---
 
+### 3. `dependency-check.yml`
+**🔍 Dependency Warning Check**
+
+**Purpose**: Monitors for Python, Azure CLI, and other dependency warnings that could affect workflows.
+
+**Trigger**: 
+- Manual (`workflow_dispatch`)
+- Scheduled (weekly on Mondays at 9 AM UTC)
+
+**Usage**:
+```yaml
+# Runs automatically on schedule
+# Can also be triggered manually from Actions tab
+```
+
+**What it does**:
+1. 🔍 Scans for Python dependency warnings (pkg_resources, setuptools)
+2. 🛡️ Checks Azure CLI for deprecation warnings
+3. 📊 Generates comprehensive dependency report
+4. 🚨 Creates GitHub issues for critical warnings
+5. 📤 Uploads detailed warning logs as artifacts
+
+**Output Artifacts**:
+- `dependency-warnings-report` - Detailed warning analysis
+- `dependency-warnings-raw` - Raw warning logs
+
+**Security Notes**:
+- 🔒 **Safe to run** - No Azure access required
+- 📋 **Monitoring only** - No system modifications
+- 🔔 **Proactive** - Helps prevent workflow failures
+
+---
+
+### 4. `terraform-plan.yml`
+**� Terraform Plan & Validation**
+
+**Purpose**: Validates Terraform configuration and generates deployment plans for review.
+
+**Trigger**: 
+- Manual (`workflow_dispatch`)
+- Pull requests affecting `infra/tf/**`
+- Push to main branch (auto-plan)
+
+**Parameters**:
+- `environment` (dev, staging, prod)
+- `destroy_plan` (boolean) - Generate destroy plan instead of apply plan
+- `detailed_output` (boolean) - Show detailed plan output in logs
+
+**Usage**:
+```yaml
+# Manual execution
+# Navigate to Actions tab
+# Select "🔍 Terraform Plan & Validation" workflow
+# Choose environment and options
+```
+
+**Prerequisites**:
+- ✅ Bootstrap script completed
+- ✅ Backend configuration in place
+- ✅ Environment secrets configured
+
+**What it does**:
+1. 🔐 Authenticates with Azure using OIDC
+2. � Validates Terraform configuration syntax
+3. 🏗️ Initializes Terraform with remote backend
+4. 🛡️ Runs security scanning with Checkov
+5. 📋 Generates detailed plan for changes
+6. 💬 Comments plan summary on PRs (if applicable)
+7. 📤 Uploads plan files and reports as artifacts
+
+**Output Artifacts**:
+- `terraform-plan-{env}-{run}` - Plan files and outputs
+- `plan-summary.md` - Human-readable plan summary
+- `checkov-report.sarif` - Security scan results
+
+**Security Features**:
+- 🔐 **OIDC Authentication** - No long-lived secrets
+- 🛡️ **Security Scanning** - Automated vulnerability detection
+- 📋 **Change Review** - Detailed plan analysis before apply
+- 🔒 **Environment isolation** - Separate plans per environment
+
+---
+
+### 5. `terraform-apply.yml`
+**� Terraform Apply & Deploy**
+
+**Purpose**: Executes Terraform deployments to create and manage AKS infrastructure.
+
+**Trigger**: 
+- Manual (`workflow_dispatch`)
+- Requires plan artifact from terraform-plan workflow
+
+**Parameters**:
+- `environment` (dev, staging, prod)
+- `plan_run_number` - Run number from terraform-plan workflow
+- `auto_approve` (boolean) - Skip manual approval (use carefully)
+
+**Usage**:
+```yaml
+# Must run terraform-plan first
+# Navigate to Actions tab
+# Select "� Terraform Apply & Deploy" workflow
+# Specify environment and plan run number
+```
+
+**Prerequisites**:
+- ✅ Bootstrap script completed
+- ✅ terraform-plan workflow completed successfully
+- ✅ Plan artifacts available
+- ✅ Manual approval (unless auto_approve enabled)
+
+**What it does**:
+1. 🔐 Authenticates with Azure using OIDC
+2. 📥 Downloads plan artifacts from specified run
+3. 🔍 Validates plan integrity and environment
+4. ⏱️ Waits for manual approval (if required)
+5. 🚀 Executes terraform apply with generated plan
+6. 📊 Generates deployment summary and metrics
+7. 📤 Uploads deployment logs and state info
+
+**Output Artifacts**:
+- `terraform-apply-{env}-{run}` - Apply logs and results
+- `deployment-summary.md` - Deployment report
+- `post-deployment-info.json` - Resource details for add-ons
+
+**Security Features**:
+- 🔐 **OIDC Authentication** - No long-lived secrets
+- ✅ **Plan Validation** - Only applies pre-validated plans
+- 🛡️ **Manual Approval** - Human verification before deployment
+- 📋 **Audit Trail** - Complete deployment logging
+
+---
+
 ## 🚀 Execution Guide
 
 ### Initial Setup Sequence
+
+**⚠️ Note**: Backend setup is now done via bootstrap script, not workflows.
 
 1. **Prerequisites Validation**
    ```bash
@@ -154,10 +255,10 @@ graph TB
    ./scripts/check-prerequisites.sh
    ```
 
-2. **GitHub Environments Setup**
+2. **Bootstrap Backend Storage**
    ```bash
    # Run locally (admin required)
-   ./scripts/setup-github-environments.sh
+   ./scripts/bootstrap-terraform-backend.sh
    ```
 
 3. **Verify Environments**
@@ -166,24 +267,45 @@ graph TB
    # Check output artifacts for environment status
    ```
 
-4. **Managed Identity Setup**
-   ```bash
-   # Run locally (admin required)
-   ./scripts/setup-terraform-backend-identity.sh
-   ```
-
-5. **Test OIDC Authentication**
+4. **Test OIDC Authentication**
    ```yaml
    # GitHub Actions: Run test-oidc.yml for each environment
    # Parameters: environment = dev, staging, prod
    ```
 
-6. **Create Backend Storage**
+5. **Plan Infrastructure**
    ```yaml
-   # GitHub Actions: Run setup-terraform-backend.yml for each environment
-   # Parameters: environment = dev, staging, prod
+   # GitHub Actions: Run terraform-plan.yml for each environment
+   # Review generated plans and security scan results
    ```
 
+6. **Deploy Infrastructure**
+   ```yaml
+   # GitHub Actions: Run terraform-apply.yml for each environment
+   # Use plan artifacts from previous step
+   ```
+
+### Typical Development Workflow
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant GitHub as GitHub Actions
+    participant Azure as Azure
+    
+    Dev->>GitHub: Create PR with Terraform changes
+    GitHub->>Azure: Run terraform-plan.yml (auto-trigger)
+    Azure-->>GitHub: Plan results
+    GitHub-->>Dev: Plan comment on PR
+    
+    Dev->>GitHub: Merge PR after review
+    
+    Dev->>GitHub: Manual trigger terraform-apply.yml
+    Note over GitHub: Manual approval required
+    GitHub->>Azure: Execute terraform apply
+    Azure-->>GitHub: Deployment complete
+    GitHub-->>Dev: Deployment summary
+```
 ### Workflow Execution Order
 
 ```mermaid
@@ -192,12 +314,123 @@ sequenceDiagram
     participant GitHub
     participant Azure
     
+    Note over User: One-time Bootstrap (Local)
+    User->>User: Run bootstrap-terraform-backend.sh
+    
+    Note over User,Azure: Validation Workflows
     User->>GitHub: Run verify-environments.yml
     GitHub-->>User: Environment status report
     
     User->>GitHub: Run test-oidc.yml (dev)
     GitHub->>Azure: OIDC Authentication
     Azure-->>GitHub: Success/Failure
+    GitHub-->>User: Authentication report
+    
+    Note over User,Azure: Infrastructure Deployment
+    User->>GitHub: Run terraform-plan.yml (dev)
+    GitHub->>Azure: Plan infrastructure changes
+    Azure-->>GitHub: Plan results
+    GitHub-->>User: Plan artifacts and summary
+    
+    User->>GitHub: Run terraform-apply.yml (dev)
+    GitHub->>Azure: Deploy infrastructure
+    Azure-->>GitHub: Deployment complete
+    GitHub-->>User: Deployment summary
+    
+    Note over User,Azure: Repeat for staging and prod
+```
+
+## 🔐 Security & Permissions
+
+### Authentication Flow
+
+```mermaid
+graph LR
+    A[GitHub Actions] --> B[OIDC Token Request]
+    B --> C[Azure AD]
+    C --> D[Managed Identity]
+    D --> E[Azure Resources]
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style C fill:#bbf,stroke:#333,stroke-width:2px
+    style D fill:#bfb,stroke:#333,stroke-width:2px
+```
+
+### Required Secrets per Environment
+
+Each environment needs these secrets configured:
+
+| Secret | Purpose | Example |
+|--------|---------|---------|
+| `AZURE_CLIENT_ID` | Managed identity client ID | `12345678-1234-1234-1234-123456789012` |
+| `AZURE_TENANT_ID` | Azure AD tenant ID | `87654321-4321-4321-4321-210987654321` |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID | `abcdef12-3456-7890-abcd-ef1234567890` |
+
+### Permission Matrix
+
+| Workflow | Azure Permissions | GitHub Permissions |
+|----------|-------------------|-------------------|
+| `verify-environments.yml` | None | Repository read |
+| `test-oidc.yml` | Reader | Environment secrets |
+| `dependency-check.yml` | None | Repository read, Issues write |
+| `terraform-plan.yml` | Contributor (scope: resource group) | Environment secrets, PR comments |
+| `terraform-apply.yml` | Contributor (scope: resource group) | Environment secrets |
+
+## � Artifacts & Reports
+
+### Terraform Plan Artifacts
+
+**File**: `terraform-plan-{environment}-{run-number}`
+- `tfplan` - Binary plan file
+- `plan-output.txt` - Human-readable plan
+- `plan-summary.md` - Formatted summary
+- `checkov-report.sarif` - Security scan results
+
+**Example plan-summary.md**:
+```markdown
+# Terraform Plan Summary - DEV
+
+## Plan Overview
+**Environment**: dev
+**Plan Type**: Apply
+**Generated**: 2025-07-08 14:30:00 UTC
+
+## Resource Changes
+| Action | Count |
+|--------|-------|
+| 🟢 Add | 15 |
+| 🟡 Change | 2 |
+| 🔴 Destroy | 0 |
+
+## Validation Results
+- ✅ **Terraform Validation**: Passed
+- ✅ **Security Scan**: No critical issues
+- ✅ **Plan Generation**: Success
+```
+
+### Terraform Apply Artifacts
+
+**File**: `terraform-apply-{environment}-{run-number}`
+- `apply-output.txt` - Apply execution log
+- `deployment-summary.md` - Deployment report
+- `post-deployment-info.json` - Resource details
+
+### Environment Status Report
+
+**File**: `environment-status-report.md`
+```markdown
+# GitHub Environments Status Report
+
+## Environment Configuration
+- ✅ **DEV**: Configured with protection rules
+- ✅ **STAGING**: Configured with protection rules  
+- ✅ **PROD**: Configured with protection rules
+
+## Security Configuration
+- 🔒 Environment protection rules active
+- 🔐 Required reviewers configured
+- ⏱️ Deployment delays configured
+```
     GitHub-->>User: Authentication report
     
     User->>GitHub: Run setup-terraform-backend.yml (dev)
