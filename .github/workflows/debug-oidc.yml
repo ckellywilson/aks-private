@@ -1,0 +1,83 @@
+name: 🔍 Debug OIDC Token Claims
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  debug-oidc:
+    name: Debug OIDC Token
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔍 Debug OIDC Token Claims
+        run: |
+          echo "🔍 Debugging OIDC token claims..."
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          
+          # Get the OIDC token and decode it (just the payload, not the signature)
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+            echo "✅ OIDC token is available"
+            
+            # Request the token from GitHub
+            OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
+            
+            if [ "$OIDC_TOKEN" != "null" ] && [ -n "$OIDC_TOKEN" ]; then
+              echo "✅ Successfully got OIDC token"
+              
+              # Decode the JWT payload (base64 decode the middle part)
+              echo "🔍 Token payload (claims):"
+              echo "$OIDC_TOKEN" | cut -d'.' -f2 | base64 -d 2>/dev/null | jq . || echo "Could not decode token payload"
+            else
+              echo "❌ Failed to get OIDC token"
+            fi
+          else
+            echo "❌ ACTIONS_ID_TOKEN_REQUEST_TOKEN not available"
+          fi
+
+      - name: 🧪 Test Different Auth Methods
+        run: |
+          echo "🧪 Testing different authentication approaches..."
+          
+          # Method 1: Using environment-specific secrets
+          echo "Method 1: Environment secrets"
+          echo "Client ID: ${{ secrets.AZURE_CLIENT_ID }}"
+          echo "Tenant ID: ${{ secrets.AZURE_TENANT_ID }}"
+          echo "Subscription ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          
+          # Get OIDC token again for login attempt
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+            OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
+            
+            if [ "$OIDC_TOKEN" != "null" ] && [ -n "$OIDC_TOKEN" ]; then
+              echo "🔐 Attempting Azure login with OIDC..."
+              az login --service-principal \
+                --username ${{ secrets.AZURE_CLIENT_ID }} \
+                --tenant ${{ secrets.AZURE_TENANT_ID }} \
+                --allow-no-subscriptions \
+                --federated-token "$OIDC_TOKEN" || echo "❌ Login failed"
+            fi
+          fi
