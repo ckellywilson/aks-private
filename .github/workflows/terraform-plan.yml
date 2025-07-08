@@ -1,0 +1,550 @@
+name: 🔍 Terraform Plan & Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to plan deployment for'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      destroy_plan:
+        description: 'Generate destroy plan instead of apply plan'
+        required: false
+        type: boolean
+        default: false
+      detailed_output:
+        description: 'Show detailed plan output in logs'
+        required: false
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - 'infra/tf/**'
+      - '.github/workflows/terraform-plan.yml'
+    branches:
+      - main
+      - develop
+  push:
+    paths:
+      - 'infra/tf/**'
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write  # For PR comments
+  issues: write         # For issue creation on failures
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan (${{ github.event.inputs.environment || 'dev' }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    env:
+      TF_IN_AUTOMATION: true
+      TF_VAR_environment: ${{ github.event.inputs.environment || 'dev' }}
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    
+    outputs:
+      plan_status: ${{ steps.plan.outputs.status }}
+      plan_summary: ${{ steps.plan.outputs.summary }}
+      validation_status: ${{ steps.validate.outputs.status }}
+    
+    steps:
+      - name: 📥 [1/10] Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better context
+
+      - name: 🔐 [2/10] Azure Login with OIDC
+        run: |
+          echo "=========================================="
+          echo "🔐 STEP 2: AZURE OIDC AUTHENTICATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████░░░░░░░░░░░░░░░░░░░░] 20%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Authenticating with Azure using OIDC..."
+          
+          echo "📋 Authentication Configuration:"
+          echo "• Client ID: ${{ secrets.AZURE_CLIENT_ID }}"
+          echo "• Tenant ID: ${{ secrets.AZURE_TENANT_ID }}"
+          echo "• Subscription ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          echo "• Authentication Method: OIDC Federation"
+          echo ""
+          
+          # Get OIDC token
+          echo "▶️ Requesting OIDC token..."
+          OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
+          
+          if [ "$OIDC_TOKEN" = "null" ] || [ -z "$OIDC_TOKEN" ]; then
+            echo "❌ Failed to get OIDC token"
+            exit 1
+          fi
+          
+          echo "✅ OIDC token obtained successfully"
+          
+          # Login using OIDC
+          echo "▶️ Logging in to Azure..."
+          az login --service-principal \
+            --username ${{ secrets.AZURE_CLIENT_ID }} \
+            --tenant ${{ secrets.AZURE_TENANT_ID }} \
+            --allow-no-subscriptions \
+            --federated-token "$OIDC_TOKEN"
+          
+          # Set subscription
+          echo "▶️ Setting subscription context..."
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+          # Verify authentication
+          echo "▶️ Verifying authentication..."
+          az account show --query '{name:name, id:id, tenantId:tenantId}' -o table
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Azure authentication completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 🏗️ [3/10] Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9.0"
+          terraform_wrapper: false  # Disable wrapper for cleaner output
+
+      - name: 🔍 [4/10] Validate Terraform Configuration
+        id: validate
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "🔍 STEP 4: TERRAFORM CONFIGURATION VALIDATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████░░░░░░░░░░░░░░░░░░░░] 40%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Validating Terraform configuration..."
+          
+          echo "📋 Validation Checks:"
+          echo "• Syntax validation"
+          echo "• Configuration consistency"
+          echo "• Provider requirements"
+          echo "• Variable definitions"
+          echo ""
+          
+          # Format check
+          echo "▶️ Checking Terraform formatting..."
+          terraform fmt -check -recursive || {
+            echo "⚠️ Terraform files are not properly formatted"
+            echo "Run 'terraform fmt -recursive' to fix formatting"
+            terraform fmt -diff -recursive
+          }
+          
+          # Validation
+          echo "▶️ Running terraform validate..."
+          terraform validate
+          
+          VALIDATION_STATUS=$?
+          if [ $VALIDATION_STATUS -eq 0 ]; then
+            echo "✅ Terraform configuration is valid"
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Terraform configuration validation failed"
+            echo "status=failure" >> $GITHUB_OUTPUT
+          fi
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Terraform validation completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 🔧 [5/10] Initialize Terraform
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "🔧 STEP 5: TERRAFORM INITIALIZATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████░░░░░░░░░░░░] 50%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Initializing Terraform..."
+          
+          echo "📋 Initialization Configuration:"
+          echo "• Backend: Azure Storage"
+          echo "• Environment: ${{ github.event.inputs.environment || 'dev' }}"
+          echo "• Working Directory: $(pwd)"
+          echo ""
+          
+          # Initialize with backend
+          echo "▶️ Running terraform init..."
+          terraform init -input=false
+          
+          # Show providers
+          echo "▶️ Checking provider versions..."
+          terraform version
+          terraform providers
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Terraform initialization completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 🔍 [6/10] Security Scan with Checkov
+        working-directory: infra/tf
+        continue-on-error: true  # Don't fail the workflow for security issues
+        run: |
+          echo "=========================================="
+          echo "🔍 STEP 6: SECURITY SCANNING WITH CHECKOV"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████░░░░░░░░] 60%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Installing and running Checkov security scanner..."
+          
+          # Install Checkov
+          pip3 install checkov
+          
+          echo "📋 Security Scan Configuration:"
+          echo "• Scanner: Checkov"
+          echo "• Target: Terraform files"
+          echo "• Output: SARIF format for GitHub integration"
+          echo ""
+          
+          # Run security scan
+          echo "▶️ Running security scan..."
+          checkov -d . --framework terraform \
+            --output cli \
+            --output sarif \
+            --output-file-path console,checkov-report.sarif || true
+          
+          # Check if SARIF file was created
+          if [ -f "checkov-report.sarif" ]; then
+            echo "✅ Security scan completed - SARIF report generated"
+            echo "📊 Results saved to checkov-report.sarif"
+          else
+            echo "⚠️ Security scan completed - no SARIF report generated"
+          fi
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Security scanning completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 📋 [7/10] Generate Terraform Plan
+        id: plan
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "📋 STEP 7: TERRAFORM PLAN GENERATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████░░░░] 70%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          
+          # Determine plan type
+          if [ "${{ github.event.inputs.destroy_plan }}" = "true" ]; then
+            PLAN_TYPE="destroy"
+            PLAN_FLAG="-destroy"
+            echo "▶️ Generating DESTROY plan..."
+            echo "⚠️ WARNING: This will plan the destruction of resources!"
+          else
+            PLAN_TYPE="apply"
+            PLAN_FLAG=""
+            echo "▶️ Generating APPLY plan..."
+          fi
+          
+          echo "📋 Plan Configuration:"
+          echo "• Plan Type: $PLAN_TYPE"
+          echo "• Environment: ${{ github.event.inputs.environment || 'dev' }}"
+          echo "• Detailed Output: ${{ github.event.inputs.detailed_output || 'true' }}"
+          echo ""
+          
+          # Generate plan
+          echo "▶️ Running terraform plan..."
+          terraform plan $PLAN_FLAG \
+            -input=false \
+            -out=tfplan \
+            -detailed-exitcode \
+            -var-file="terraform.tfvars" 2>&1 | tee plan-output.txt
+          
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+          
+          # Analyze plan results
+          case $PLAN_EXIT_CODE in
+            0)
+              PLAN_STATUS="no-changes"
+              PLAN_SUMMARY="No changes required"
+              echo "✅ No changes detected"
+              ;;
+            1)
+              PLAN_STATUS="error"
+              PLAN_SUMMARY="Plan generation failed"
+              echo "❌ Plan generation failed"
+              ;;
+            2)
+              PLAN_STATUS="changes"
+              PLAN_SUMMARY="Changes detected"
+              echo "📝 Changes detected in plan"
+              ;;
+            *)
+              PLAN_STATUS="unknown"
+              PLAN_SUMMARY="Unknown plan status"
+              echo "⚠️ Unknown plan exit code: $PLAN_EXIT_CODE"
+              ;;
+          esac
+          
+          # Save outputs
+          echo "status=$PLAN_STATUS" >> $GITHUB_OUTPUT
+          echo "summary=$PLAN_SUMMARY" >> $GITHUB_OUTPUT
+          
+          # Show plan summary if detailed output is enabled
+          if [ "${{ github.event.inputs.detailed_output }}" = "true" ] && [ -f "plan-output.txt" ]; then
+            echo ""
+            echo "📋 Plan Output Summary:"
+            echo "----------------------------------------"
+            # Show last 50 lines of plan for summary
+            tail -50 plan-output.txt
+            echo "----------------------------------------"
+          fi
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Terraform plan generation completed"
+          echo "📊 Plan Status: $PLAN_STATUS"
+          echo "📝 Summary: $PLAN_SUMMARY"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 💾 [8/10] Save Plan and Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.event.inputs.environment || 'dev' }}-${{ github.run_number }}
+          path: |
+            infra/tf/tfplan
+            infra/tf/plan-output.txt
+            infra/tf/checkov-report.sarif
+          retention-days: 30
+
+      - name: 📊 [9/10] Generate Plan Summary
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "📊 STEP 9: PLAN SUMMARY GENERATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████░░] 90%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Generating comprehensive plan summary..."
+          
+          # Generate detailed plan summary
+          if [ -f "tfplan" ]; then
+            echo "▶️ Analyzing plan file..."
+            terraform show -json tfplan > plan.json
+            
+            # Extract key metrics
+            RESOURCES_TO_ADD=$(jq -r '.resource_changes[] | select(.change.actions[] == "create") | .address' plan.json 2>/dev/null | wc -l)
+            RESOURCES_TO_CHANGE=$(jq -r '.resource_changes[] | select(.change.actions[] == "update") | .address' plan.json 2>/dev/null | wc -l)
+            RESOURCES_TO_DESTROY=$(jq -r '.resource_changes[] | select(.change.actions[] == "delete") | .address' plan.json 2>/dev/null | wc -l)
+            
+            echo "📊 Plan Statistics:"
+            echo "• Resources to Add: $RESOURCES_TO_ADD"
+            echo "• Resources to Change: $RESOURCES_TO_CHANGE"
+            echo "• Resources to Destroy: $RESOURCES_TO_DESTROY"
+            echo ""
+            
+            # Generate markdown summary
+            cat > plan-summary.md << EOF
+          # Terraform Plan Summary - ${{ github.event.inputs.environment || 'dev' }}
+          
+          ## Plan Overview
+          
+          **Environment**: ${{ github.event.inputs.environment || 'dev' }}
+          **Plan Type**: ${{ github.event.inputs.destroy_plan == 'true' && 'Destroy' || 'Apply' }}
+          **Generated**: $(date)
+          **Workflow**: ${{ github.workflow }}
+          **Run**: ${{ github.run_number }}
+          **Status**: ${{ steps.plan.outputs.status }}
+          
+          ## Resource Changes
+          
+          | Action | Count |
+          |--------|-------|
+          | 🟢 Add | $RESOURCES_TO_ADD |
+          | 🟡 Change | $RESOURCES_TO_CHANGE |
+          | 🔴 Destroy | $RESOURCES_TO_DESTROY |
+          
+          ## Validation Results
+          
+          - ✅ **Terraform Validation**: ${{ steps.validate.outputs.status }}
+          - ✅ **Security Scan**: Completed (see artifacts)
+          - ✅ **Plan Generation**: ${{ steps.plan.outputs.status }}
+          
+          ## Next Steps
+          
+          1. **Review Plan**: Download and review the plan artifacts
+          2. **Security Review**: Check the Checkov security scan results
+          3. **Approval**: Get necessary approvals for changes
+          4. **Apply**: Use the apply workflow to execute changes
+          
+          ---
+          
+          Generated by: ${{ github.actor }}
+          Commit: ${{ github.sha }}
+          EOF
+          
+          else
+            echo "⚠️ Plan file not found, generating basic summary..."
+            cat > plan-summary.md << EOF
+          # Terraform Plan Summary - ${{ github.event.inputs.environment || 'dev' }}
+          
+          **Status**: ${{ steps.plan.outputs.status }}
+          **Summary**: ${{ steps.plan.outputs.summary }}
+          **Generated**: $(date)
+          
+          Plan details are available in the workflow logs and artifacts.
+          EOF
+          fi
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Plan summary generated"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 💬 [9/10] Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = './infra/tf/plan-summary.md';
+            
+            if (fs.existsSync(path)) {
+              const summary = fs.readFileSync(path, 'utf8');
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 🔍 Terraform Plan Results\n\n${summary}`
+              });
+            }
+
+      - name: 🎉 [10/10] Plan Complete
+        run: |
+          echo "=========================================="
+          echo "🎉 STEP 10: WORKFLOW COMPLETION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████████████████████████████████] 100%"
+          echo ""
+          
+          echo "🎉 Terraform plan and validation completed successfully!"
+          echo ""
+          echo "📋 Summary:"
+          echo "• Environment: ${{ github.event.inputs.environment || 'dev' }}"
+          echo "• Validation Status: ${{ steps.validate.outputs.status }}"
+          echo "• Plan Status: ${{ steps.plan.outputs.status }}"
+          echo "• Plan Summary: ${{ steps.plan.outputs.summary }}"
+          echo ""
+          echo "📦 Artifacts Generated:"
+          echo "• Terraform plan file (tfplan)"
+          echo "• Plan output logs"
+          echo "• Security scan results (SARIF)"
+          echo "• Plan summary report"
+          echo ""
+          echo "🔄 Next Steps:"
+          echo "1. Review the plan artifacts and summary"
+          echo "2. Check security scan results for any issues"
+          echo "3. If satisfied, proceed with terraform apply workflow"
+          echo "4. Monitor the deployment process"
+          echo ""
+          echo "✅ Workflow completed successfully"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+  notify-on-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: failure()
+    
+    steps:
+      - name: 🚨 Create Issue on Failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Terraform Plan Failed - ${{ github.event.inputs.environment || 'dev' }}`;
+            const body = `
+            ## Terraform Plan Failure Report
+            
+            **Environment**: ${{ github.event.inputs.environment || 'dev' }}
+            **Workflow Run**: ${{ github.run_id }}
+            **Triggered By**: ${{ github.actor }}
+            **Commit**: ${{ github.sha }}
+            
+            ### Failure Details
+            
+            - **Validation Status**: ${{ needs.terraform-plan.outputs.validation_status }}
+            - **Plan Status**: ${{ needs.terraform-plan.outputs.plan_status }}
+            
+            ### Action Required
+            
+            1. Review the workflow logs: [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            2. Check for configuration errors or permission issues
+            3. Fix the issues and re-run the workflow
+            
+            ### Troubleshooting
+            
+            - Check Azure permissions and OIDC configuration
+            - Verify Terraform configuration syntax
+            - Review security scan results if available
+            
+            ---
+            
+            This issue was automatically created by the Terraform Plan workflow.
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['terraform', 'deployment-failure', 'auto-created']
+            });

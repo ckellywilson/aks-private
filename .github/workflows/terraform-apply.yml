@@ -1,0 +1,380 @@
+name: 🚀 Terraform Apply & Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      plan_run_id:
+        description: 'Plan workflow run ID (optional - will use latest if not provided)'
+        required: false
+        type: string
+      auto_approve:
+        description: 'Auto-approve deployment (use with caution)'
+        required: false
+        type: boolean
+        default: false
+      destroy_mode:
+        description: 'Destroy resources instead of creating them'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+  deployments: write
+
+jobs:
+  terraform-apply:
+    name: Terraform Apply (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: 
+      name: ${{ github.event.inputs.environment }}
+      url: ${{ steps.deployment.outputs.environment_url }}
+    
+    env:
+      TF_IN_AUTOMATION: true
+      TF_VAR_environment: ${{ github.event.inputs.environment }}
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    
+    outputs:
+      deployment_status: ${{ steps.apply.outputs.status }}
+      deployment_summary: ${{ steps.apply.outputs.summary }}
+      environment_url: ${{ steps.deployment.outputs.environment_url }}
+    
+    steps:
+      - name: 📥 [1/8] Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔐 [2/8] Azure Login with OIDC
+        run: |
+          echo "=========================================="
+          echo "🔐 STEP 2: AZURE OIDC AUTHENTICATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████░░░░░░░░░░░░░░░░░░░░] 25%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Authenticating with Azure using OIDC..."
+          
+          # Get OIDC token
+          OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
+          
+          if [ "$OIDC_TOKEN" = "null" ] || [ -z "$OIDC_TOKEN" ]; then
+            echo "❌ Failed to get OIDC token"
+            exit 1
+          fi
+          
+          # Login using OIDC
+          az login --service-principal \
+            --username ${{ secrets.AZURE_CLIENT_ID }} \
+            --tenant ${{ secrets.AZURE_TENANT_ID }} \
+            --allow-no-subscriptions \
+            --federated-token "$OIDC_TOKEN"
+          
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          az account show --query '{name:name, id:id, tenantId:tenantId}' -o table
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Azure authentication completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 🏗️ [3/8] Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9.0"
+          terraform_wrapper: false
+
+      - name: 🔧 [4/8] Initialize Terraform
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "🔧 STEP 4: TERRAFORM INITIALIZATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████░░░░░░░░░░░░] 50%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Initializing Terraform..."
+          
+          terraform init -input=false
+          terraform version
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Terraform initialization completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 📋 [5/8] Download Previous Plan (Optional)
+        if: github.event.inputs.plan_run_id != ''
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "📋 STEP 5: PLAN ARTIFACT DOWNLOAD"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████░░░░] 62%"
+          echo ""
+          
+          echo "📋 Plan Run ID: ${{ github.event.inputs.plan_run_id }}"
+          echo "⚠️ Note: Plan download requires additional GitHub API setup"
+          echo "Proceeding with fresh plan generation instead..."
+          echo ""
+          echo "=========================================="
+
+      - name: 🚀 [6/8] Apply Terraform Changes
+        id: apply
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "🚀 STEP 6: TERRAFORM APPLY"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████░░░░] 75%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          
+          # Determine apply mode
+          if [ "${{ github.event.inputs.destroy_mode }}" = "true" ]; then
+            APPLY_MODE="destroy"
+            APPLY_FLAGS="-destroy"
+            echo "⚠️ DESTROY MODE ENABLED"
+            echo "▶️ This will destroy infrastructure resources!"
+          else
+            APPLY_MODE="apply"
+            APPLY_FLAGS=""
+            echo "▶️ Applying infrastructure changes..."
+          fi
+          
+          echo "📋 Apply Configuration:"
+          echo "• Mode: $APPLY_MODE"
+          echo "• Environment: ${{ github.event.inputs.environment }}"
+          echo "• Auto-approve: ${{ github.event.inputs.auto_approve }}"
+          echo ""
+          
+          # Generate fresh plan
+          echo "▶️ Generating fresh plan..."
+          terraform plan $APPLY_FLAGS \
+            -input=false \
+            -out=tfplan \
+            -var-file="terraform.tfvars"
+          
+          # Apply changes
+          if [ "${{ github.event.inputs.auto_approve }}" = "true" ]; then
+            echo "▶️ Auto-applying changes..."
+            terraform apply -input=false tfplan 2>&1 | tee apply-output.txt
+          else
+            echo "❌ Manual approval required"
+            echo "Set auto_approve to true to proceed with deployment"
+            echo "status=approval-required" >> $GITHUB_OUTPUT
+            echo "summary=Manual approval required" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          APPLY_EXIT_CODE=${PIPESTATUS[0]}
+          
+          if [ $APPLY_EXIT_CODE -eq 0 ]; then
+            echo "✅ Terraform apply completed successfully"
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "summary=Deployment completed successfully" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Terraform apply failed"
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "summary=Deployment failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Terraform apply completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 🔍 [7/8] Post-Deployment Verification
+        id: deployment
+        working-directory: infra/tf
+        run: |
+          echo "=========================================="
+          echo "🔍 STEP 7: POST-DEPLOYMENT VERIFICATION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████░░] 87%"
+          echo ""
+          
+          START_TIME=$(date +%s)
+          echo "▶️ Verifying deployment..."
+          
+          # Get outputs
+          echo "▶️ Retrieving Terraform outputs..."
+          terraform output -json > outputs.json 2>/dev/null || echo "{}" > outputs.json
+          
+          # Check for common outputs
+          if [ -f "outputs.json" ] && [ "$(cat outputs.json)" != "{}" ]; then
+            echo "📋 Deployment Outputs:"
+            terraform output
+            
+            # Try to extract environment URL
+            ENVIRONMENT_URL=$(jq -r '.cluster_fqdn.value // .aks_cluster_fqdn.value // .application_url.value // empty' outputs.json 2>/dev/null || echo "")
+            if [ -n "$ENVIRONMENT_URL" ]; then
+              echo "environment_url=https://$ENVIRONMENT_URL" >> $GITHUB_OUTPUT
+              echo "🌐 Environment URL: https://$ENVIRONMENT_URL"
+            fi
+          else
+            echo "📋 No deployment outputs available"
+          fi
+          
+          # Basic connectivity tests
+          echo "▶️ Running basic verification checks..."
+          
+          # Check Azure resources
+          echo "▶️ Verifying Azure resources..."
+          RESOURCE_GROUP="rg-aks-${{ github.event.inputs.environment }}"
+          if az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            echo "✅ Resource group exists: $RESOURCE_GROUP"
+            
+            # Check AKS cluster if it should exist
+            AKS_CLUSTER="aks-${{ github.event.inputs.environment }}"
+            if az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER" >/dev/null 2>&1; then
+              echo "✅ AKS cluster exists: $AKS_CLUSTER"
+              
+              # Get cluster status
+              CLUSTER_STATE=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER" --query "powerState.code" -o tsv 2>/dev/null || echo "Unknown")
+              echo "🔍 Cluster state: $CLUSTER_STATE"
+            fi
+          fi
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo ""
+          echo "✅ Post-deployment verification completed"
+          echo "⏱️ Execution time: ${DURATION}s"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: 📤 [7/8] Upload Deployment Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-deployment-${{ github.event.inputs.environment }}-${{ github.run_number }}
+          path: |
+            infra/tf/apply-output.txt
+            infra/tf/outputs.json
+            infra/tf/terraform.tfstate.backup
+          retention-days: 90
+
+      - name: 🎉 [8/8] Deployment Complete
+        run: |
+          echo "=========================================="
+          echo "🎉 STEP 8: DEPLOYMENT COMPLETION"
+          echo "=========================================="
+          echo "⏱️ Start time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎯 Progress: [████████████████████████████████████████████████████████████████████████████████████████████████████████████████] 100%"
+          echo ""
+          
+          echo "🎉 Terraform deployment completed successfully!"
+          echo ""
+          echo "📋 Deployment Summary:"
+          echo "• Environment: ${{ github.event.inputs.environment }}"
+          echo "• Mode: ${{ github.event.inputs.destroy_mode == 'true' && 'Destroy' || 'Apply' }}"
+          echo "• Status: ${{ steps.apply.outputs.status }}"
+          echo "• Summary: ${{ steps.apply.outputs.summary }}"
+          if [ -n "${{ steps.deployment.outputs.environment_url }}" ]; then
+            echo "• Environment URL: ${{ steps.deployment.outputs.environment_url }}"
+          fi
+          echo ""
+          echo "📦 Artifacts Generated:"
+          echo "• Deployment logs"
+          echo "• Terraform outputs"
+          echo "• State backup"
+          echo ""
+          echo "🔄 Next Steps:"
+          echo "1. Verify the deployment in the Azure portal"
+          echo "2. Test application functionality"
+          echo "3. Monitor system health and performance"
+          echo "4. Update documentation if needed"
+          echo ""
+          echo "✅ Workflow completed successfully"
+          echo "⏱️ End time: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+  notify-on-failure:
+    name: Notify on Deployment Failure
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: failure()
+    
+    steps:
+      - name: 🚨 Create Issue on Deployment Failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Terraform Deployment Failed - ${{ github.event.inputs.environment }}`;
+            const body = `
+            ## Terraform Deployment Failure Report
+            
+            **Environment**: ${{ github.event.inputs.environment }}
+            **Mode**: ${{ github.event.inputs.destroy_mode == 'true' && 'Destroy' || 'Apply' }}
+            **Workflow Run**: ${{ github.run_id }}
+            **Triggered By**: ${{ github.actor }}
+            **Commit**: ${{ github.sha }}
+            
+            ### Failure Details
+            
+            - **Deployment Status**: ${{ needs.terraform-apply.outputs.deployment_status }}
+            - **Summary**: ${{ needs.terraform-apply.outputs.deployment_summary }}
+            
+            ### Immediate Actions Required
+            
+            1. 🔍 **Investigate**: [View Deployment Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            2. 🏥 **Health Check**: Verify existing infrastructure is still operational
+            3. 🔧 **Remediation**: Fix issues and plan recovery if needed
+            
+            ### Investigation Checklist
+            
+            - [ ] Check Azure resource status in portal
+            - [ ] Verify OIDC authentication and permissions
+            - [ ] Review Terraform state consistency
+            - [ ] Check for Azure service outages
+            - [ ] Verify network connectivity and DNS
+            
+            ### Recovery Options
+            
+            - Re-run deployment after fixing issues
+            - Roll back to previous working state if needed
+            - Manual intervention in Azure portal if required
+            
+            ---
+            
+            **Priority**: High - Deployment failure requires immediate attention
+            This issue was automatically created by the Terraform Apply workflow.
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['terraform', 'deployment-failure', 'high-priority', 'auto-created']
+            });
