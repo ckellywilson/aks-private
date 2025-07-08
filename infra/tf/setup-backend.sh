@@ -126,11 +126,35 @@ if [ -n "$MANAGED_IDENTITY_PRINCIPAL_ID" ]; then
         --scope "$STORAGE_ACCOUNT_ID" \
         --output table || echo "⚠️ Role assignment may already exist"
     
-    echo -e "${GREEN}✅ Storage permissions assigned successfully${NC}"
+    echo -e "${GREEN}✅ Storage permissions assigned to managed identity${NC}"
 else
     echo -e "${YELLOW}⚠️ Managed identity not found - permissions may need to be assigned manually${NC}"
     echo "Run this command manually:"
     echo "az role assignment create --assignee <managed-identity-principal-id> --role 'Storage Blob Data Contributor' --scope '$STORAGE_ACCOUNT_ID'"
+fi
+
+# Also assign permissions to GitHub Actions service principal for workflow testing
+if [ -n "${AZURE_CLIENT_ID:-}" ]; then
+    echo -e "${YELLOW}Assigning storage permissions to GitHub Actions service principal for testing...${NC}"
+    
+    # Get storage account resource ID if not already set
+    STORAGE_ACCOUNT_ID=${STORAGE_ACCOUNT_ID:-$(az storage account show \
+        --name "$STORAGE_ACCOUNT_NAME" \
+        --resource-group "$RESOURCE_GROUP_NAME" \
+        --query id -o tsv)}
+    
+    echo "GitHub Actions service principal: $AZURE_CLIENT_ID"
+    echo "Assigning Storage Blob Data Reader role for testing..."
+    az role assignment create \
+        --assignee "$AZURE_CLIENT_ID" \
+        --role "Storage Blob Data Reader" \
+        --scope "$STORAGE_ACCOUNT_ID" \
+        --output table || echo "⚠️ Role assignment may already exist or insufficient permissions"
+    
+    echo -e "${GREEN}✅ GitHub Actions service principal permissions configured${NC}"
+else
+    echo -e "${YELLOW}⚠️ AZURE_CLIENT_ID not set - GitHub Actions testing permissions not configured${NC}"
+    echo "For testing access in workflows, manually assign 'Storage Blob Data Reader' role to the GitHub Actions service principal"
 fi
 
 # Enable diagnostic logging for authentication troubleshooting
