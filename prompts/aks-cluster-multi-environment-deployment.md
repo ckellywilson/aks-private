@@ -166,38 +166,181 @@ VNet (10.242.0.0/16)
 
 ## Terraform Module Structure
 ```
-modules/
-├── aks/
-│   ├── main.tf
-│   ├── variables.tf
-│   └── outputs.tf
-├── networking/
-│   ├── main.tf
-│   ├── variables.tf
-│   └── outputs.tf
-├── acr/
-│   ├── main.tf
-│   ├── variables.tf
-│   └── outputs.tf
-└── monitoring/
-    ├── main.tf
-    ├── variables.tf
-    └── outputs.tf
-
-environments/
-├── dev/
-│   ├── main.tf
-│   ├── variables.tf
-│   └── terraform.tfvars
-├── staging/
-│   ├── main.tf
-│   ├── variables.tf
-│   └── terraform.tfvars
-└── prod/
-    ├── main.tf
-    ├── variables.tf
-    └── terraform.tfvars
+infra/tf/
+├── modules/                    # Reusable infrastructure modules
+│   ├── aks/
+│   │   ├── main.tf            # AKS cluster resources
+│   │   ├── variables.tf       # Input variables
+│   │   └── outputs.tf         # Output values
+│   ├── networking/
+│   │   ├── main.tf            # VNet, subnets, NSGs
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   ├── acr/
+│   │   ├── main.tf            # Container registry
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   └── monitoring/
+│       ├── main.tf            # Log Analytics, monitoring
+│       ├── variables.tf
+│       └── outputs.tf
+└── environments/               # Environment-specific deployments
+    ├── dev/
+    │   ├── main.tf            # Module calls for dev
+    │   ├── variables.tf       # Dev-specific variables
+    │   ├── terraform.tfvars   # Dev variable values
+    │   ├── backend.tf         # Dev backend configuration
+    │   └── outputs.tf         # Dev-specific outputs
+    ├── staging/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   ├── terraform.tfvars
+    │   ├── backend.tf
+    │   └── outputs.tf
+    └── prod/
+        ├── main.tf
+        ├── variables.tf
+        ├── terraform.tfvars
+        ├── backend.tf
+        └── outputs.tf
 ```
+
+## Architectural Decision: Separate Environment Folders
+
+### Why Separate Folders Over Single Folder + Workspaces
+
+This prompt uses the **separate environment folders** approach rather than Terraform workspaces for several critical reasons:
+
+#### ✅ **State Isolation & Safety**
+```bash
+# Each environment has completely isolated state
+environments/dev/     → Uses dev state backend
+environments/staging/ → Uses staging state backend  
+environments/prod/    → Uses prod state backend
+
+# No risk of accidentally affecting wrong environment
+cd environments/dev && terraform apply    # Only touches dev resources
+cd environments/prod && terraform apply  # Only touches prod resources
+```
+
+#### ✅ **Blast Radius Control**
+- Terraform errors are contained to single environment
+- No risk of destroying production while working on development
+- Failed state operations don't affect other environments
+- Easier rollback and recovery per environment
+
+#### ✅ **Environment-Specific Backend Configurations**
+```hcl
+# environments/dev/backend.tf
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "rg-terraform-state-dev"
+    storage_account_name = "staksdevtfstate"
+    container_name       = "terraform-state"
+    key                  = "dev.tfstate"
+  }
+}
+
+# environments/prod/backend.tf  
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "rg-terraform-state-prod"
+    storage_account_name = "staksprodtfstate"
+    container_name       = "terraform-state"
+    key                  = "prod.tfstate"
+  }
+}
+```
+
+#### ✅ **Team Access Control**
+- Production folders can have restricted access
+- Developers can have full access to dev environment only
+- CI/CD pipelines can use environment-specific service principals
+- Easier to implement least-privilege access
+
+#### ✅ **CI/CD Pipeline Simplicity**
+```yaml
+# Simple environment-specific pipeline triggers
+trigger:
+  paths:
+    include:
+    - infra/tf/environments/dev/*    # Only triggers dev pipeline
+    - infra/tf/modules/*             # Triggers all environments
+```
+
+#### ❌ **Problems with Single Folder + Workspaces**
+- **Shared state backend**: All environments in same storage account
+- **Workspace confusion**: Easy to `terraform apply` to wrong workspace
+- **Complex CI/CD**: Need workspace switching logic in pipelines
+- **Provider limitations**: Difficult to use different Azure subscriptions
+- **Human error prone**: `terraform workspace select prod` before operations
+
+### Implementation Best Practices
+
+#### **Module Design Principles**
+```hcl
+# modules/aks/main.tf - Environment-agnostic module
+resource "azurerm_kubernetes_cluster" "main" {
+  name                = "${var.environment}-aks-${var.instance}"
+  private_cluster_enabled = var.enable_private_cluster
+  
+  # All configuration driven by variables
+  api_server_access_profile {
+    authorized_ip_ranges = var.aks_api_server_authorized_ip_ranges
+  }
+}
+
+# environments/dev/main.tf - Environment-specific configuration
+module "aks" {
+  source = "../../modules/aks"
+  
+  environment             = "dev"
+  instance               = "001"
+  enable_private_cluster = false      # Dev-specific: public access
+  aks_api_server_authorized_ip_ranges = ["0.0.0.0/0"]
+}
+
+# environments/prod/main.tf - Different configuration, same module
+module "aks" {
+  source = "../../modules/aks"
+  
+  environment             = "prod" 
+  instance               = "001"
+  enable_private_cluster = true       # Prod-specific: private access
+  aks_api_server_authorized_ip_ranges = []
+}
+```
+
+#### **Variable Management Strategy**
+```hcl
+# environments/dev/variables.tf - Environment-specific variable definitions
+variable "enable_private_cluster" {
+  description = "Enable private cluster for AKS"
+  type        = bool
+  default     = false  # Dev default: public for easy access
+}
+
+# environments/prod/variables.tf - Different defaults for prod
+variable "enable_private_cluster" {
+  description = "Enable private cluster for AKS"
+  type        = bool
+  default     = true   # Prod default: private for security
+}
+```
+
+#### **Backend Configuration Management**
+```bash
+# Separate backend configs prevent cross-environment mistakes
+backend-configs/
+├── dev.conf
+├── staging.conf
+└── prod.conf
+
+# Initialize with specific backend
+terraform init -backend-config=../../../backend-configs/dev.conf
+```
+
+This architectural approach ensures maximum safety, scalability, and maintainability for multi-environment infrastructure management.
 
 ## Module Design Patterns
 
