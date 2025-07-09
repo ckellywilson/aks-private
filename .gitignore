@@ -53,3 +53,18 @@ backend-status-report-*.md
 # Workflow artifacts and temporary files
 environments.json
 environment-status-report.md
+
+# Security scan reports (generated artifacts)
+checkov-report.sarif
+**/checkov-report.sarif
+*.sarif
+
+# Downloaded plan artifacts
+terraform-plan-*/
+plan-download/
+
+# Plan output files (generated during planning)
+plan-output.txt
+**/plan-output.txt
+apply-output.txt
+**/apply-output.txt
