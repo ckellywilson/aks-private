@@ -44,7 +44,7 @@ enable_pod_security_policy = true
 
 # Jump VM Configuration (for Bastion access)
 jump_vm_name           = "vm-jumpbox-dev-cus-001"
-jump_vm_size          = "Standard_B2s"
+jump_vm_size           = "Standard_B2s"
 jump_vm_admin_username = "azureuser"
 jump_vm_admin_password = "AKS-Dev-Pass001!"
 
