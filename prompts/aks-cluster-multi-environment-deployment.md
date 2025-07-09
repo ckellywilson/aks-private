@@ -20,10 +20,11 @@ Deploy, configure, and troubleshoot AKS clusters across three environments with 
 3. Deploy staging environment with private configurations
 4. Deploy production with full security controls
 
-### Phase 3: Automation
+### Phase 3: Automation & Operations
 1. Create deployment scripts for each environment
-2. Implement CI/CD pipelines with environment-specific approvals
+2. Prepare infrastructure for CI/CD integration (without creating pipelines)
 3. Add monitoring and alerting configurations
+4. Document deployment procedures for chosen CI/CD platform
 
 ## Quick Start Guide
 
@@ -338,25 +339,45 @@ kubectl get pods -A
 docker push myregistry.azurecr.io/myapp:latest
 ```
 
-## Deployment Pipeline Configuration
+## CI/CD Integration Considerations
 
-### Development Pipeline
-- **Triggers**: Every commit to development branch
-- **Testing**: Basic unit tests and linting
-- **Deployment**: Direct to dev cluster
-- **Approval**: None required
+### Infrastructure Readiness for CI/CD Platforms
+The infrastructure modules should be designed to work with either Azure DevOps or GitHub Actions:
 
-### Staging Pipeline  
-- **Triggers**: Merge to main branch
-- **Testing**: Full test suite including integration tests
-- **Deployment**: To staging cluster via private access
-- **Approval**: Automated deployment after tests pass
+#### Azure DevOps Considerations
+- Service connections for Azure authentication
+- Variable groups for environment-specific configurations  
+- Pipeline templates for consistent deployments
+- Approval gates for production deployments
 
-### Production Pipeline
-- **Triggers**: Tagged releases
-- **Testing**: Complete test suite + security scans
-- **Deployment**: To production cluster via private access
-- **Approval**: Manual approval required
+#### GitHub Actions Considerations
+- OIDC authentication with Azure
+- Environment secrets and variables
+- Reusable workflows for deployment consistency
+- Environment protection rules
+
+### CI/CD Integration Points
+```hcl
+# Output values needed for CI/CD integration
+output "cluster_name" {
+  value = azurerm_kubernetes_cluster.main.name
+}
+
+output "resource_group_name" {
+  value = azurerm_kubernetes_cluster.main.resource_group_name
+}
+
+output "acr_login_server" {
+  value = azurerm_container_registry.main.login_server
+}
+```
+
+### Environment-Specific Deployment Patterns
+- **Development**: Automated deployment on code changes
+- **Staging**: Automated deployment with post-deployment testing
+- **Production**: Manual approval with automated deployment after approval
+
+**Note**: This prompt focuses on infrastructure creation. CI/CD pipeline implementation should be done separately based on your chosen platform (Azure DevOps or GitHub Actions).
 
 ## Common Configuration Areas
 - Environment-specific Kubernetes versions and upgrade policies
@@ -504,13 +525,15 @@ echo "$ENVIRONMENT environment validation complete"
 - **Access documentation**: Clear procedures for each environment
 - **Security guidelines**: Environment-appropriate security measures
 - **Troubleshooting guides**: Environment-specific issue resolution
-- **CI/CD pipelines**: Automated deployment with appropriate gates
+- **Infrastructure outputs**: Values needed for CI/CD platform integration
+- **Deployment scripts**: Manual deployment capabilities for testing
 
 ## Additional Context
 - Using Terraform with environment-specific state files
-- GitHub Actions with environment-specific secrets and approvals
+- Infrastructure designed for integration with Azure DevOps or GitHub Actions
 - Helm charts with environment-specific values
 - Azure CLI and kubectl with environment-specific configurations
 - Following Azure Well-Architected Framework with environment considerations
 - Cost optimization strategies for development environments
 - Security hardening for staging and production environments
+- Manual deployment scripts for testing and emergency scenarios
