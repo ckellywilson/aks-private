@@ -9,7 +9,7 @@ This index provides a quick reference to all available prompts organized by cate
 | `terraform-backend-network-access.md` | Storage backend issues | VNet integration, 403 errors, network rules |
 | `terraform-backend-multi-environment.md` | Multi-env backend setup | Dev/Stage/Prod, ACR, private networks |
 | `troubleshooting-network-connectivity.md` | Network problems | Connectivity issues, DNS, diagnostics |
-| `aks-cluster-private-deployment.md` | AKS cluster setup | Private cluster, networking, Bastion |
+| `aks-cluster-multi-environment-deployment.md` | Multi-env AKS setup | Dev/Staging/Prod, public/private access |
 
 ## 📂 All Prompts by Category
 
@@ -41,10 +41,10 @@ This index provides a quick reference to all available prompts organized by cate
   - Risk assessment and mitigation
 
 ### ☸️ AKS Cluster Management
-- **`aks-cluster-private-deployment.md`**
-  - Private cluster deployment and configuration
-  - Networking and connectivity setup
-  - Identity management and RBAC
+- **`aks-cluster-multi-environment-deployment.md`**
+  - Multi-environment AKS cluster deployment (Dev/Staging/Prod)
+  - Environment-specific security configurations
+  - Public vs private access patterns
   - Integration with Azure services
 
 ### 🚀 Deployment and Automation
@@ -79,7 +79,7 @@ This index provides a quick reference to all available prompts organized by cate
 |--------------|-----------------|
 | Fix storage backend 403 errors | `terraform-backend-network-access.md` |
 | Set up multi-environment backend with ACR | `terraform-backend-multi-environment.md` |
-| Deploy private AKS cluster | `aks-cluster-private-deployment.md` |
+| Deploy multi-environment AKS clusters | `aks-cluster-multi-environment-deployment.md` |
 | Set up GitHub Actions for private resources | `deployment-github-actions-pipelines.md` |
 | Create reusable Terraform modules | `infrastructure-terraform-modules.md` |
 | Implement security best practices | `infrastructure-security-best-practices.md` |
@@ -97,7 +97,7 @@ This index provides a quick reference to all available prompts organized by cate
 - **Networking**: `terraform-backend-network-*`, `troubleshooting-network-*`
 
 ### By Complexity
-- **Beginner**: `aks-cluster-private-deployment.md`
+- **Beginner**: `aks-cluster-multi-environment-deployment.md`
 - **Intermediate**: `terraform-backend-network-access.md`, `deployment-github-actions-pipelines.md`
 - **Advanced**: `infrastructure-security-best-practices.md`, `infrastructure-terraform-modules.md`
 
