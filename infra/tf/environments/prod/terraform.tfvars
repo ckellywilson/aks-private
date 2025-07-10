@@ -21,6 +21,20 @@ monitoring_level                  = "full"
 enable_bastion                    = true
 enable_jumpbox                    = true
 
+# Ingress Controller Settings - Production
+enable_internal_load_balancer  = true    # Internal load balancer for security
+ingress_replica_count          = 3       # High availability with 3 replicas
+ingress_cpu_requests           = "500m"  # Higher resources for production
+ingress_memory_requests        = "512Mi" # Higher resources for production
+ingress_cpu_limits             = "1000m" # Higher limits for production
+ingress_memory_limits          = "1Gi"   # Higher limits for production
+ingress_enable_metrics         = true    # Enable comprehensive metrics
+ingress_enable_prometheus_rule = true    # Enable advanced monitoring rules
+ingress_subnet_name            = "aks-subnet"
+enable_cert_manager            = true                   # Enable Let's Encrypt certificates
+letsencrypt_email              = "admin@yourdomain.com" # Update with actual email
+enable_azure_key_vault_csi     = true                   # Enable Azure Key Vault integration
+
 # Tags
 tags = {
   Environment = "production"

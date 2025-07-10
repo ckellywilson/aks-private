@@ -27,15 +27,11 @@ This repository deploys:
 ├── docs/                       # Additional documentation
 ├── infra/tf/                   # Terraform infrastructure code
 │   ├── modules/                # Reusable Terraform modules
-│   ├── main.tf                 # Main infrastructure configuration
-│   ├variables.tf               # Input variables
-│   ├── outputs.tf              # Output values
-│   ├── Makefile                # Local deployment automation
+│   ├── environments/           # Environment-specific configurations
 │   └── README.md               # Detailed Terraform documentation
-├── scripts/                    # Administrative scripts
-│   ├── bootstrap-terraform-backend.sh  # Bootstrap Terraform backend
-│   ├── setup-github-environments.sh   # One-time environment setup
-│   ├── deploy-addons.sh        # AKS add-ons deployment
+├── validation/                 # Validation and testing scripts
+│   ├── validate-ingress.sh     # Ingress-nginx validation
+│   ├── create-sample-ingress.sh # Sample application deployment
 │   └── README.md               # Scripts documentation
 └── README.md                   # This file
 ```
@@ -58,10 +54,10 @@ This repository deploys:
    cd aks-private
    ```
 
-2. **Set up GitHub environments** (admin only):
-   ```bash
-   ./scripts/setup-github-environments.sh
-   ```
+2. **Set up GitHub environments** manually in GitHub repository settings (admin only):
+   - Create environments: `dev`, `staging`, `prod`
+   - Configure environment protection rules
+   - Set up required reviewers for staging and production
 
 3. **Configure secrets** in GitHub environments (`dev`, `staging`, `prod`):
    - `AZURE_CLIENT_ID`
@@ -77,12 +73,9 @@ This repository deploys:
 
 ### 3. Set up Terraform Backend
 
-Run the bootstrap script to create the Terraform backend storage:
-```bash
-./scripts/bootstrap-terraform-backend.sh
-```
+Create the Terraform backend storage manually using Azure CLI or Azure Portal:
 
-This will create:
+**Required Resources:**
 - Azure Storage Account for Terraform state
 - Managed Identity for secure access
 - OIDC federation for GitHub Actions
@@ -92,30 +85,24 @@ This will create:
 
 You can deploy the infrastructure using either method:
 
-#### Option A: Local Deployment (using Makefile)
+#### Option A: Local Deployment
 
-1. **Navigate to the Terraform directory**:
+1. **Navigate to the environment directory**:
    ```bash
-   cd infra/tf
+   cd infra/tf/environments/dev  # or staging/prod
    ```
 
-2. **Deploy using Makefile**:
+2. **Deploy using Terraform**:
    ```bash
-   # Deploy to dev environment
-   make deploy-dev
+   # Initialize Terraform
+   terraform init
    
-   # Deploy to staging environment
-   make deploy-staging
+   # Plan the deployment
+   terraform plan -out=dev.tfplan
    
-   # Deploy to production environment
-   make deploy-prod
+   # Apply the deployment
+   terraform apply dev.tfplan
    ```
-
-The Makefile handles:
-- Environment configuration
-- Terraform initialization
-- Backend configuration
-- Plan and apply operations
 
 #### Option B: GitHub Actions Deployment (recommended)
 
@@ -166,7 +153,7 @@ The Makefile handles:
 
 #### Benefits of Each Approach
 
-**Local Deployment (Makefile)**:
+**Local Deployment**:
 - ✅ Direct control over deployment
 - ✅ Easy for development and testing
 - ✅ Immediate feedback and troubleshooting
@@ -326,20 +313,17 @@ kubectl get nodes
 
 ## 🛠️ Administrative Scripts
 
-Located in [`scripts/`](scripts/) directory:
+Located in [`validation/`](validation/) directory:
 
-- **`bootstrap-terraform-backend.sh`**: One-time setup of Terraform backend storage (admin only)
-- **`setup-github-environments.sh`**: One-time environment setup (admin only)
-- **`deploy-addons.sh`**: Deploy AKS add-ons (nginx-ingress, cert-manager)
+- **`validate-ingress.sh`**: Validate ingress-nginx deployment and functionality
+- **`create-sample-ingress.sh`**: Create sample applications for ingress testing
 
-⚠️ **Security Note**: Admin scripts require elevated permissions and should only be run manually by repository administrators.
-
-**Setup Sequence**: Run `bootstrap-terraform-backend.sh` before any deployment to create the required storage infrastructure.
+> **Note**: These scripts are for post-deployment validation and testing only. Infrastructure deployment is managed through Terraform directly.
 
 ## 📚 Documentation
 
 - [`infra/tf/README.md`](infra/tf/README.md): Detailed Terraform configuration and deployment guide
-- [`scripts/README.md`](scripts/README.md): Administrative scripts documentation
+- [`validation/README.md`](validation/README.md): Validation and testing scripts documentation
 - [`docs/README.md`](docs/README.md): Additional project documentation
 
 ## 🆘 Troubleshooting

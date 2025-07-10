@@ -1,3 +1,19 @@
+provider "kubernetes" {
+  host                   = module.aks.kube_config.0.host
+  client_certificate     = base64decode(module.aks.kube_config.0.client_certificate)
+  client_key             = base64decode(module.aks.kube_config.0.client_key)
+  cluster_ca_certificate = base64decode(module.aks.kube_config.0.cluster_ca_certificate)
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = module.aks.kube_config.0.host
+    client_certificate     = base64decode(module.aks.kube_config.0.client_certificate)
+    client_key             = base64decode(module.aks.kube_config.0.client_key)
+    cluster_ca_certificate = base64decode(module.aks.kube_config.0.cluster_ca_certificate)
+  }
+}
+
 # Create Resource Group
 resource "azurerm_resource_group" "main" {
   name     = var.resource_group_name
@@ -69,5 +85,29 @@ module "aks" {
     module.networking,
     module.monitoring,
     module.acr
+  ]
+}
+
+# Ingress Module - Deploy ingress-nginx controller for staging
+module "ingress" {
+  source = "../../modules/ingress"
+
+  environment                   = var.environment
+  enable_internal_load_balancer = var.enable_internal_load_balancer
+  ingress_replica_count         = var.ingress_replica_count
+  cpu_requests                  = var.ingress_cpu_requests
+  memory_requests               = var.ingress_memory_requests
+  cpu_limits                    = var.ingress_cpu_limits
+  memory_limits                 = var.ingress_memory_limits
+  enable_metrics                = var.ingress_enable_metrics
+  enable_prometheus_rule        = var.ingress_enable_prometheus_rule
+  subnet_name                   = var.ingress_subnet_name
+  enable_cert_manager           = var.enable_cert_manager
+  letsencrypt_email             = var.letsencrypt_email
+  enable_azure_key_vault_csi    = var.enable_azure_key_vault_csi
+  tags                          = var.tags
+
+  depends_on = [
+    module.aks
   ]
 }

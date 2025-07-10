@@ -344,7 +344,7 @@ jobs:
     - name: Terraform Init (Dev)
       working-directory: infra/tf
       run: |
-        cp environments/dev/backend.tf .
+        cp environments/dev/providers.tf .
         terraform init -input=false
 
     - name: Terraform Validate
@@ -526,7 +526,7 @@ jobs:
     - name: Terraform Init
       working-directory: infra/tf
       run: |
-        cp "environments/${ENVIRONMENT}/backend.tf" .
+        cp "environments/${ENVIRONMENT}/providers.tf" .
         terraform init
 
     - name: Terraform Plan
@@ -600,7 +600,7 @@ setup_environment_security() {
 
 ### 1. Terraform State Management
 ```hcl
-# backend.tf - Enhanced backend configuration
+# providers.tf - Enhanced provider and backend configuration
 terraform {
   required_version = ">= 1.6.0"
   

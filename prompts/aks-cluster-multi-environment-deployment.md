@@ -26,6 +26,13 @@ Deploy, configure, and troubleshoot AKS clusters across three environments with 
 3. Add monitoring and alerting configurations
 4. Document deployment procedures for chosen CI/CD platform
 
+### Phase 4: Ingress Configuration and Testing
+1. Validate ingress-nginx controller deployment (deployed via Terraform)
+2. Test ingress functionality and DNS resolution
+3. Create sample applications for ingress testing
+4. Configure SSL/TLS certificates for ingress (if using cert-manager)
+5. Document ingress access patterns for each environment
+
 ## Quick Start Guide
 
 ### Prerequisites
@@ -57,6 +64,11 @@ az aks get-credentials --resource-group dev-aks-rg --name dev-aks
 - [ ] Jump box access procedures documented
 - [ ] Monitoring and alerting configured
 - [ ] Backup and disaster recovery tested
+- [ ] Ingress-nginx controller deployed via Terraform
+- [ ] Ingress functionality validated using provided scripts
+- [ ] SSL/TLS certificates configured for ingress
+- [ ] DNS records pointing to ingress load balancer
+- [ ] Ingress access tested from appropriate networks
 
 ## Environment Requirements
 
@@ -180,29 +192,41 @@ infra/tf/
 │   │   ├── main.tf            # Container registry
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   └── monitoring/
-│       ├── main.tf            # Log Analytics, monitoring
+│   ├── monitoring/
+│   │   ├── main.tf            # Log Analytics, monitoring
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   └── ingress/
+│       ├── main.tf            # Ingress controller (Helm)
 │       ├── variables.tf
+│       ├── outputs.tf
+│       └── values-templates/  # Helm values templates
+│           ├── values-dev.yaml
+│           ├── values-staging.yaml
+│           └── values-prod.yaml
+├── environments/               # Environment-specific deployments
+│   ├── dev/
+│   │   ├── main.tf            # Module calls for dev
+│   │   ├── variables.tf       # Dev-specific variables
+│   │   ├── terraform.tfvars   # Dev variable values
+│   │   ├── providers.tf       # Dev provider configuration
+│   │   └── outputs.tf         # Dev-specific outputs
+│   ├── staging/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   ├── terraform.tfvars
+│   │   ├── providers.tf
+│   │   └── outputs.tf
+│   └── prod/
+│       ├── main.tf
+│       ├── variables.tf
+│       ├── terraform.tfvars
+│       ├── providers.tf
 │       └── outputs.tf
-└── environments/               # Environment-specific deployments
-    ├── dev/
-    │   ├── main.tf            # Module calls for dev
-    │   ├── variables.tf       # Dev-specific variables
-    │   ├── terraform.tfvars   # Dev variable values
-    │   ├── backend.tf         # Dev backend configuration
-    │   └── outputs.tf         # Dev-specific outputs
-    ├── staging/
-    │   ├── main.tf
-    │   ├── variables.tf
-    │   ├── terraform.tfvars
-    │   ├── backend.tf
-    │   └── outputs.tf
-    └── prod/
-        ├── main.tf
-        ├── variables.tf
-        ├── terraform.tfvars
-        ├── backend.tf
-        └── outputs.tf
+└── helm-values/                # Helm chart values files
+    ├── ingress-nginx-values-dev.yaml
+    ├── ingress-nginx-values-staging.yaml
+    └── ingress-nginx-values-prod.yaml
 ```
 
 ## Architectural Decision: Separate Environment Folders
@@ -231,7 +255,7 @@ cd environments/prod && terraform apply  # Only touches prod resources
 
 #### ✅ **Environment-Specific Backend Configurations**
 ```hcl
-# environments/dev/backend.tf
+# environments/dev/providers.tf
 terraform {
   backend "azurerm" {
     resource_group_name  = "rg-terraform-state-dev"
@@ -241,7 +265,7 @@ terraform {
   }
 }
 
-# environments/prod/backend.tf  
+# environments/prod/providers.tf  
 terraform {
   backend "azurerm" {
     resource_group_name  = "rg-terraform-state-prod"
@@ -522,86 +546,615 @@ output "acr_login_server" {
 
 **Note**: This prompt focuses on infrastructure creation. CI/CD pipeline implementation should be done separately based on your chosen platform (Azure DevOps or GitHub Actions).
 
-## Common Configuration Areas
-- Environment-specific Kubernetes versions and upgrade policies
-- Node pool sizing based on environment requirements
-- Network policies appropriate for security level
-- Ingress controllers with environment-specific configurations
-- Certificate management (dev vs. production certificates)
-- Monitoring and alerting levels by environment
-- RBAC policies matching environment access patterns
+## Post-Deployment Helm Configuration
 
-## Typical Issues by Environment
+### Ingress-Nginx Controller Deployment
 
-### Development Issues
-- Cost optimization vs. functionality balance
-- Public endpoint security concerns
-- Resource quotas and limitations
-- Developer access management
+The ingress-nginx controller is deployed automatically as part of the main Terraform infrastructure deployment, not as a separate post-deployment step. The controller is configured using environment-specific Helm values templates and integrated into the Terraform module structure.
 
-### Staging/Production Issues
-- Private endpoint connectivity problems
-- Bastion host access and configuration
-- Private DNS resolution issues
-- Network security group rule conflicts
-- ACR authentication through private endpoints
-- Monitoring in restricted network environments
+#### Terraform Integration
+The ingress-nginx controller is deployed using the dedicated `ingress` module located at `modules/ingress/`. This module:
+- Creates the ingress-nginx namespace with proper labels
+- Deploys ingress-nginx using Helm with environment-specific configurations
+- Optionally deploys cert-manager for SSL certificate management
+- Optionally deploys Azure Key Vault CSI driver for secret management
 
-## Common Implementation Pitfalls
+#### Environment-Specific Configuration
+Each environment has tailored ingress-nginx settings defined in Terraform variables and applied through Helm values templates:
 
-### Module Dependencies
-- **Issue**: Circular dependencies between modules
-- **Solution**: Use data sources for existing resources, careful output management
+##### Development Environment Configuration
+- **Replicas**: 1 (cost-optimized)
+- **Resources**: Minimal (100m CPU, 90Mi memory)
+- **Load Balancer**: Public (for easy access)
+- **Monitoring**: Basic metrics enabled
+- **SSL**: Optional cert-manager integration
+
+##### Staging Environment Configuration  
+- **Replicas**: 2 (basic high availability)
+- **Resources**: Moderate (200m CPU, 180Mi memory)
+- **Load Balancer**: Internal (private networking)
+- **Monitoring**: Enhanced metrics and basic alerting
+- **SSL**: cert-manager recommended
+
+##### Production Environment Configuration
+- **Replicas**: 3+ (high availability)
+- **Resources**: Production-grade (500m CPU, 512Mi memory)
+- **Load Balancer**: Internal (private networking)
+- **Monitoring**: Comprehensive metrics and alerting
+- **SSL**: cert-manager with production certificates
+
+#### Deployment Process
+When you run `terraform apply` in any environment, the ingress-nginx controller is deployed automatically:
+
+```bash
+# Deploy entire infrastructure including ingress-nginx
+cd infra/tf/environments/dev
+terraform init
+terraform apply
+
+# Verify ingress controller deployment
+kubectl get pods -n ingress-nginx
+kubectl get svc -n ingress-nginx ingress-nginx-controller
+```
+
+#### Validation and Testing
+After Terraform deployment, use the provided validation scripts to ensure proper ingress functionality:
+
+```bash
+# Validate ingress-nginx deployment
+./validation/validate-ingress.sh dev
+
+# Create sample application for testing
+./validation/create-sample-ingress.sh dev
+```
+
+#### Terraform Module Structure
+The ingress module includes the following components:
+
+```
+modules/ingress/
+├── main.tf                    # Main ingress-nginx deployment
+├── variables.tf               # Input variables for configuration
+├── outputs.tf                 # Outputs for downstream consumption
+└── values-templates/          # Environment-specific Helm values
+    ├── values-dev.yaml        # Development configuration
+    ├── values-staging.yaml    # Staging configuration
+    └── values-prod.yaml       # Production configuration
+```
+
+#### Configuration Variables
+Key Terraform variables for ingress-nginx configuration:
+
+- `ingress_replica_count`: Number of controller replicas
+- `ingress_cpu_requests/limits`: CPU resource allocation
+- `ingress_memory_requests/limits`: Memory resource allocation
+- `enable_internal_load_balancer`: Use internal vs public load balancer
+- `enable_metrics`: Enable Prometheus metrics collection
+- `enable_cert_manager`: Deploy cert-manager for SSL certificates
+- `enable_azure_key_vault_csi`: Deploy Azure Key Vault CSI driver
+
+#### Environment-Specific Values Templates
+
+###### Development Environment Values (`values-dev.yaml`)
+```yaml
+controller:
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 90Mi
+    limits:
+      cpu: 200m
+      memory: 180Mi
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations: []
+  affinity: {}
+
+# Development-specific configurations
+defaultBackend:
+  enabled: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 20Mi
+    limits:
+      cpu: 20m
+      memory: 40Mi
+```
+
+###### Staging Environment Values (`values-staging.yaml`)
+```yaml
+controller:
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "aks-subnet"
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 180Mi
+    limits:
+      cpu: 500m
+      memory: 360Mi
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+          topologyKey: kubernetes.io/hostname
+
+# Staging-specific configurations
+defaultBackend:
+  enabled: true
+  resources:
+    requests:
+      cpu: 20m
+      memory: 30Mi
+    limits:
+      cpu: 50m
+      memory: 60Mi
+
+# Enable metrics for monitoring
+metrics:
+  enabled: true
+  service:
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "10254"
+```
+
+###### Production Environment Values (`values-prod.yaml`)
+```yaml
+controller:
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "aks-subnet"
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: ingress-nginx
+        topologyKey: kubernetes.io/hostname
+  
+  # Production-grade configurations
+  config:
+    use-proxy-protocol: "true"
+    compute-full-forwarded-for: "true"
+    use-forwarded-headers: "true"
+    log-format-escape-json: "true"
+    log-format-upstream: '{"time": "$time_iso8601", "remote_addr": "$proxy_protocol_addr", "x_forwarded_for": "$proxy_add_x_forwarded_for", "request_id": "$req_id", "remote_user": "$remote_user", "bytes_sent": $bytes_sent, "request_time": $request_time, "status": $status, "vhost": "$host", "request_proto": "$server_protocol", "path": "$uri", "request_query": "$args", "request_length": $request_length, "duration": $request_time, "method": "$request_method", "http_referrer": "$http_referer", "http_user_agent": "$http_user_agent"}'
+
+# Production-specific configurations
+defaultBackend:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 60Mi
+    limits:
+      cpu: 100m
+      memory: 120Mi
+
+# Enable comprehensive monitoring
+metrics:
+  enabled: true
+  service:
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "10254"
+  prometheusRule:
+    enabled: true
+    rules:
+      - alert: NGINXConfigFailed
+        expr: count(nginx_ingress_controller_config_last_reload_successful == 0) > 0
+        for: 1s
+        labels:
+          severity: critical
+        annotations:
+          description: bad ingress config - nginx config test failed
+          summary: uninstall the latest ingress changes to allow config reloads to resume
+      - alert: NGINXCertificateExpiry
+        expr: (avg(nginx_ingress_controller_ssl_expire_time_seconds) by (host) - time()) < 604800
+        for: 1s
+        labels:
+          severity: critical
+        annotations:
+          description: ssl certificate(s) will expire in less then a week
+          summary: renew expiring certificates to avoid downtime
+```
+
+#### Terraform Deployment Examples
+
+##### Deploy to Development Environment
+```bash
+cd infra/tf/environments/dev
+terraform init
+terraform plan -out=dev.tfplan
+terraform apply dev.tfplan
+
+# Verify ingress deployment
+kubectl get pods -n ingress-nginx
+kubectl get svc -n ingress-nginx ingress-nginx-controller
+```
+
+##### Deploy to Staging Environment
+```bash
+cd infra/tf/environments/staging
+terraform init
+terraform plan -out=staging.tfplan
+terraform apply staging.tfplan
+
+# Verify private load balancer assignment
+kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+```
+
+##### Deploy to Production Environment
+```bash
+cd infra/tf/environments/prod
+terraform init
+terraform plan -out=prod.tfplan
+terraform apply prod.tfplan
+
+# Verify high availability configuration
+kubectl get pods -n ingress-nginx -o wide
+kubectl get svc -n ingress-nginx ingress-nginx-controller
+```
+
+#### Post-Deployment Validation
+
+##### 1. Verify Terraform Deployment
+```bash
+# Check Terraform outputs
+terraform output ingress_controller_ip
+terraform output ingress_namespace
+terraform output ingress_class
+
+# Verify all resources are created
+terraform state list | grep module.ingress
+```
+
+##### 2. Validate Kubernetes Resources
+```bash
+# Check ingress controller pods
+kubectl get pods -n ingress-nginx
+
+# Check ingress controller service and load balancer
+kubectl get services -n ingress-nginx
+
+# Check ingress class configuration
+kubectl get ingressclass
+
+# Check ingress controller logs
+kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx
+```
+
+##### 3. Test Ingress Functionality
+```bash
+# Use validation script for comprehensive testing
+./validation/validate-ingress.sh dev
+
+# Create sample application for testing
+./validation/create-sample-ingress.sh dev
+
+# Test ingress connectivity
+curl -H 'Host: dev.app.example.com' http://<EXTERNAL_IP>
+```
+
+##### 2. Get Load Balancer IP
+```bash
+# Get external IP (development) or internal IP (staging/prod)
+kubectl get service ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+```
+
+##### 3. Configure DNS Records
+```bash
+# Development: Point DNS to public IP
+# Staging/Production: Point DNS to internal IP via private DNS zone
+
+# Example DNS configuration
+# dev.example.com    -> <public-ip>
+# staging.example.com -> <internal-ip>
+# prod.example.com   -> <internal-ip>
+```
+
+#### SSL/TLS Certificate Management
+
+##### Option 1: cert-manager with Let's Encrypt (Development)
+```bash
+# Install cert-manager
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.13.0 \
+  --set installCRDs=true
+
+# Create ClusterIssuer for Let's Encrypt
+kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+EOF
+```
+
+##### Option 2: Azure Key Vault Integration (Staging/Production)
+```bash
+# Install Azure Key Vault CSI driver
+helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+helm repo update
+
+helm install csi-secrets-store-provider-azure csi-secrets-store-provider-azure/csi-secrets-store-provider-azure \
+  --namespace kube-system \
+  --version 1.4.0
+```
+
+#### Environment-Specific Ingress Examples
+
+##### Development Ingress Example
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: example-app-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  tls:
+  - hosts:
+    - dev.example.com
+    secretName: dev-example-com-tls
+  rules:
+  - host: dev.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: example-app-service
+            port:
+              number: 80
+```
+
+##### Production Ingress Example
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: example-app-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: SAMEORIGIN";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+spec:
+  tls:
+  - hosts:
+    - prod.example.com
+    secretName: prod-example-com-tls
+  rules:
+  - host: prod.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: example-app-service
+            port:
+              number: 80
+```
+
+#### Terraform Integration for Ingress Configuration
+
+##### Add Helm Provider to Terraform
 ```hcl
-# Use data source instead of direct reference
-data "azurerm_virtual_network" "main" {
-  name                = "${var.environment}-vnet"
-  resource_group_name = var.resource_group_name
+# providers.tf
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.0"
+    }
+  }
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = azurerm_kubernetes_cluster.main.kube_config.0.host
+    client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_config.0.client_certificate)
+    client_key             = base64decode(azurerm_kubernetes_cluster.main.kube_config.0.client_key)
+    cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.main.kube_config.0.cluster_ca_certificate)
+  }
 }
 ```
 
-### Environment Variable Management  
-- **Issue**: Hardcoded values instead of environment-specific variables
-- **Solution**: Use terraform.tfvars files per environment
+##### Create Ingress Module
 ```hcl
-# dev.tfvars
-environment = "dev"
-aks_api_server_authorized_ip_ranges = ["0.0.0.0/0"]
-acr_public_network_access_enabled = true
+# modules/ingress/main.tf
+resource "kubernetes_namespace" "ingress_nginx" {
+  metadata {
+    name = "ingress-nginx"
+  }
+}
 
-# prod.tfvars  
-environment = "prod"
-aks_api_server_authorized_ip_ranges = []
-acr_public_network_access_enabled = false
+resource "helm_release" "ingress_nginx" {
+  name       = "ingress-nginx"
+  repository = "https://kubernetes.github.io/ingress-nginx"
+  chart      = "ingress-nginx"
+  version    = "4.8.3"
+  namespace  = kubernetes_namespace.ingress_nginx.metadata[0].name
+
+  values = [
+    templatefile("${path.module}/values-${var.environment}.yaml", {
+      environment = var.environment
+      internal_lb = var.enable_internal_load_balancer
+    })
+  ]
+
+  depends_on = [kubernetes_namespace.ingress_nginx]
+}
+
+# Output ingress controller service details
+data "kubernetes_service" "ingress_nginx" {
+  metadata {
+    name      = "ingress-nginx-controller"
+    namespace = kubernetes_namespace.ingress_nginx.metadata[0].name
+  }
+  depends_on = [helm_release.ingress_nginx]
+}
 ```
 
-### State Management
-- **Issue**: Shared state files causing conflicts
-- **Solution**: Separate backend configurations per environment
+##### Module Variables
 ```hcl
-# backend-dev.conf
-resource_group_name  = "rg-terraform-state-dev"
-storage_account_name = "staksdevtfstate"
-container_name       = "terraform-state"
-key                  = "dev.tfstate"
+# modules/ingress/variables.tf
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+}
+
+variable "enable_internal_load_balancer" {
+  description = "Enable internal load balancer for ingress controller"
+  type        = bool
+  default     = false
+}
+
+variable "ingress_replica_count" {
+  description = "Number of ingress controller replicas"
+  type        = number
+  default     = 1
+}
 ```
 
-### Private Cluster Access
-- **Issue**: Inability to access private clusters after deployment
-- **Solution**: Deploy bastion/jump box as part of initial deployment
-```bash
-# Deploy network infrastructure first
-terraform apply -target=module.networking
+##### Module Outputs
+```hcl
+# modules/ingress/outputs.tf
+output "ingress_controller_ip" {
+  description = "IP address of the ingress controller load balancer"
+  value       = try(data.kubernetes_service.ingress_nginx.status[0].load_balancer[0].ingress[0].ip, null)
+}
 
-# Then deploy cluster with bastion
-terraform apply
+output "ingress_controller_hostname" {
+  description = "Hostname of the ingress controller load balancer"
+  value       = try(data.kubernetes_service.ingress_nginx.status[0].load_balancer[0].ingress[0].hostname, null)
+}
+
+output "ingress_namespace" {
+  description = "Namespace where ingress controller is deployed"
+  value       = kubernetes_namespace.ingress_nginx.metadata[0].name
+}
 ```
 
-## Deployment Scripts
+#### Post-Deployment Validation Scripts
 
-### Multi-Environment Deployment Script
+##### Ingress Controller Health Check
 ```bash
 #!/bin/bash
+# validate-ingress.sh
+
+ENVIRONMENT=$1
+NAMESPACE="ingress-nginx"
+
+echo "Validating ingress-nginx controller in $ENVIRONMENT environment..."
+
+# Check if namespace exists
+if ! kubectl get namespace $NAMESPACE &> /dev/null; then
+    echo "❌ Namespace $NAMESPACE does not exist"
+    exit 1
+fi
+
+# Check if ingress controller pods are running
+PODS_READY=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}')
+if [[ $PODS_READY == *"False"* ]]; then
+    echo "❌ Ingress controller pods are not ready"
+    kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=ingress-nginx
+    exit 1
+fi
+
+# Check if service has external IP
+EXTERNAL_IP=$(kubectl get service ingress-nginx-controller -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+if [ -z "$EXTERNAL_IP" ]; then
+    echo "❌ Ingress controller service does not have external IP"
+    kubectl get service ingress-nginx-controller -n $NAMESPACE
+    exit 1
+fi
+
+echo "✅ Ingress controller is healthy"
+echo "📍 External IP: $EXTERNAL_IP"
+
+# Test ingress controller health endpoint
+if curl -s -f "http://$EXTERNAL_IP/healthz" > /dev/null; then
+    echo "✅ Ingress controller health endpoint is responsive"
+else
+    echo "⚠️  Ingress controller health endpoint is not accessible"
+fi
+
+echo "Ingress controller validation complete for $ENVIRONMENT environment"
+```
+
+#### Deployment Automation Script with Ingress
+
+```bash
+#!/bin/bash
+# deploy-with-ingress.sh
 
 ENVIRONMENT=$1
 if [ -z "$ENVIRONMENT" ]; then
@@ -609,74 +1162,82 @@ if [ -z "$ENVIRONMENT" ]; then
     exit 1
 fi
 
-echo "Deploying $ENVIRONMENT environment..."
+echo "Deploying $ENVIRONMENT environment with ingress controller..."
 
+# Deploy infrastructure
 cd "infra/tf/environments/$ENVIRONMENT"
-
-# Initialize Terraform with environment-specific backend
 terraform init -backend-config="../../../backend-$ENVIRONMENT.conf"
-
-# Plan deployment
 terraform plan -var-file="$ENVIRONMENT.tfvars" -out="$ENVIRONMENT.tfplan"
+terraform apply "$ENVIRONMENT.tfplan"
 
-# Apply (with approval for prod)
-if [ "$ENVIRONMENT" = "prod" ]; then
-    echo "Production deployment requires manual approval"
-    read -p "Continue with production deployment? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        terraform apply "$ENVIRONMENT.tfplan"
-    fi
-else
-    terraform apply "$ENVIRONMENT.tfplan"
-fi
-
-# Get cluster credentials if deployment succeeded
+# Get cluster credentials
 if [ $? -eq 0 ]; then
     echo "Getting cluster credentials..."
-    az aks get-credentials --resource-group "$ENVIRONMENT-aks-rg" --name "$ENVIRONMENT-aks"
+    az aks get-credentials --resource-group "$ENVIRONMENT-aks-rg" --name "$ENVIRONMENT-aks" --overwrite-existing
+    
+    # Wait for cluster to be ready
+    echo "Waiting for cluster to be ready..."
+    kubectl wait --for=condition=Ready nodes --all --timeout=300s
+    
+    # Deploy ingress controller
+    echo "Deploying ingress controller..."
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    helm repo update
+    
+    # Create ingress namespace
+    kubectl create namespace ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
+    
+    # Install ingress-nginx with environment-specific values
+    helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+      --namespace ingress-nginx \
+      --values "../../../helm-values/ingress-nginx-values-$ENVIRONMENT.yaml" \
+      --version 4.8.3 \
+      --wait \
+      --timeout 300s
+    
+    # Validate ingress deployment
+    echo "Validating ingress deployment..."
+    sleep 30
+    ./validate-ingress.sh $ENVIRONMENT
+    
+    echo "✅ $ENVIRONMENT environment deployment complete with ingress controller"
+else
+    echo "❌ Infrastructure deployment failed"
+    exit 1
 fi
 ```
 
-### Environment Validation Script
-```bash
-#!/bin/bash
+#### Monitoring and Alerting for Ingress
 
-ENVIRONMENT=$1
-
-echo "Validating $ENVIRONMENT environment..."
-
-# Test cluster connectivity
-kubectl cluster-info
-
-# Test ACR connectivity
-ACR_NAME="${ENVIRONMENT}acr$(terraform output -raw acr_suffix)"
-az acr check-health --name "$ACR_NAME"
-
-# Test private endpoint resolution (for staging/prod)
-if [ "$ENVIRONMENT" != "dev" ]; then
-    nslookup "$ACR_NAME.azurecr.io"
-    nslookup "${ENVIRONMENT}-aks.privatelink.${AZURE_REGION}.azmk8s.io"
-fi
-
-echo "$ENVIRONMENT environment validation complete"
+##### Prometheus Monitoring Rules
+```yaml
+# ingress-monitoring-rules.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ingress-nginx-monitoring
+  namespace: ingress-nginx
+spec:
+  groups:
+  - name: ingress-nginx
+    rules:
+    - alert: IngressNginxDown
+      expr: up{job="ingress-nginx-controller-metrics"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Ingress Nginx is down"
+        description: "Ingress Nginx has been down for more than 1 minute"
+    
+    - alert: IngressNginxHighErrorRate
+      expr: rate(nginx_ingress_controller_requests{status=~"5.."}[5m]) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High error rate in Ingress Nginx"
+        description: "Ingress Nginx error rate is above 10% for 2 minutes"
 ```
 
-## Expected Outcomes
-- **Terraform modules**: Flexible modules supporting all environments
-- **Environment configurations**: Specific variable files for each environment
-- **Access documentation**: Clear procedures for each environment
-- **Security guidelines**: Environment-appropriate security measures
-- **Troubleshooting guides**: Environment-specific issue resolution
-- **Infrastructure outputs**: Values needed for CI/CD platform integration
-- **Deployment scripts**: Manual deployment capabilities for testing
-
-## Additional Context
-- Using Terraform with environment-specific state files
-- Infrastructure designed for integration with Azure DevOps or GitHub Actions
-- Helm charts with environment-specific values
-- Azure CLI and kubectl with environment-specific configurations
-- Following Azure Well-Architected Framework with environment considerations
-- Cost optimization strategies for development environments
-- Security hardening for staging and production environments
-- Manual deployment scripts for testing and emergency scenarios
+This comprehensive post-deployment configuration ensures that ingress-nginx is properly installed, configured, and monitored across all environments with appropriate security and performance settings.

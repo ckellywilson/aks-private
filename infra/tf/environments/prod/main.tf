@@ -88,7 +88,7 @@ module "aks" {
   ]
 }
 
-# Ingress Module - Deploy ingress-nginx controller
+# Ingress Module - Deploy ingress-nginx controller for production
 module "ingress" {
   source = "../../modules/ingress"
 

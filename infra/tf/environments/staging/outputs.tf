@@ -77,3 +77,61 @@ output "resource_ids" {
     acr_pe_subnet_id           = module.networking.acr_pe_subnet_id
   }
 }
+
+# Ingress Controller Outputs
+output "ingress_controller_ip" {
+  description = "Internal IP address of the ingress controller load balancer"
+  value       = module.ingress.ingress_controller_ip
+}
+
+output "ingress_controller_hostname" {
+  description = "Hostname of the ingress controller load balancer"
+  value       = module.ingress.ingress_controller_hostname
+}
+
+output "ingress_namespace" {
+  description = "Namespace where ingress controller is deployed"
+  value       = module.ingress.ingress_namespace
+}
+
+output "ingress_class" {
+  description = "Ingress class name"
+  value       = module.ingress.ingress_class
+}
+
+output "azure_key_vault_csi_enabled" {
+  description = "Whether Azure Key Vault CSI driver is enabled"
+  value       = module.ingress.azure_key_vault_csi_enabled
+}
+
+# Staging-specific ingress access instructions
+output "ingress_access_instructions" {
+  description = "Instructions for accessing applications through ingress in staging"
+  value       = <<-EOT
+    Staging Ingress Controller Access (Private):
+    
+    1. Access through Bastion or from connected network:
+       - Ingress controller uses internal load balancer
+       - Access from within VNet or through Bastion host
+    
+    2. Get ingress controller internal IP:
+       kubectl get service ingress-nginx-controller -n ingress-nginx
+       
+    3. Create an ingress for your application:
+       kubectl apply -f your-ingress.yaml
+       
+    4. Test ingress connectivity (from within VNet):
+       curl -H "Host: your-app-staging.example.com" http://${module.ingress.ingress_controller_ip}
+    
+    5. For HTTPS with Azure Key Vault certificates:
+       - Use Azure Key Vault CSI driver (enabled)
+       - Configure SecretProviderClass for certificate retrieval
+       - Reference in ingress TLS configuration
+    
+    Internal Ingress IP: ${module.ingress.ingress_controller_ip}
+    Ingress Class: nginx
+    Azure Key Vault CSI: ${module.ingress.azure_key_vault_csi_enabled ? "Enabled" : "Disabled"}
+    
+    Note: Ingress is only accessible from within the VNet or through Bastion.
+  EOT
+}

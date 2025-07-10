@@ -34,23 +34,40 @@ output "vnet_name" {
   value       = module.networking.vnet_name
 }
 
-# Development-specific outputs
+output "bastion_public_ip" {
+  description = "Bastion public IP address"
+  value       = module.networking.bastion_public_ip
+}
+
+output "jumpbox_private_ip" {
+  description = "Jumpbox private IP address"
+  value       = module.networking.jumpbox_private_ip
+}
+
+# Production-specific outputs
 output "cluster_access_instructions" {
-  description = "Instructions for accessing the development cluster"
+  description = "Instructions for accessing the production cluster"
   value       = <<-EOT
-    Development AKS Cluster Access:
+    Production AKS Cluster Access:
     
-    1. Get cluster credentials:
+    IMPORTANT: This is a production cluster with private access only.
+    
+    1. Connect to the jumpbox through Bastion:
+       - Use Azure Bastion to connect to the jumpbox
+       - Bastion Public IP: ${module.networking.bastion_public_ip}
+    
+    2. From the jumpbox, get cluster credentials:
        az aks get-credentials --resource-group ${azurerm_resource_group.main.name} --name ${module.aks.cluster_name}
     
-    2. Verify cluster access:
+    3. Verify cluster access:
        kubectl get nodes
        kubectl get namespaces
     
-    3. ACR login (for pushing/pulling images):
+    4. ACR login (for pushing/pulling images):
        az acr login --name ${module.acr.acr_name}
     
-    Note: This is a development cluster with public access enabled for easy development.
+    Note: This is a production cluster with private access and enhanced security.
+    Direct access from outside the VNet is not allowed.
   EOT
 }
 
@@ -96,27 +113,51 @@ output "letsencrypt_issuer_name" {
   value       = module.ingress.letsencrypt_issuer_name
 }
 
-# Development-specific ingress access instructions
+output "azure_key_vault_csi_enabled" {
+  description = "Whether Azure Key Vault CSI driver is enabled"
+  value       = module.ingress.azure_key_vault_csi_enabled
+}
+
+# Production-specific ingress access instructions
 output "ingress_access_instructions" {
   description = "Instructions for accessing applications through ingress"
   value       = <<-EOT
-    Ingress Controller Access:
+    Production Ingress Controller Access:
     
-    1. Get ingress controller IP:
+    IMPORTANT: This is a production environment with enhanced security.
+    
+    1. Access from jumpbox only:
+       - Connect to jumpbox through Azure Bastion
+       - All ingress management must be done from the jumpbox
+    
+    2. Get ingress controller IP:
        kubectl get service ingress-nginx-controller -n ingress-nginx
        
-    2. Create an ingress for your application:
+    3. Create an ingress for your application:
        kubectl apply -f your-ingress.yaml
        
-    3. Test ingress connectivity:
-       curl -H "Host: your-app.example.com" http://${module.ingress.ingress_controller_ip}
+    4. Test ingress connectivity (from jumpbox):
+       curl -H "Host: your-app.yourdomain.com" http://${module.ingress.ingress_controller_ip}
     
-    4. For HTTPS with Let's Encrypt (cert-manager enabled):
+    5. For HTTPS with Let's Encrypt (cert-manager enabled):
        - Add cert-manager.io/cluster-issuer: "letsencrypt-prod" annotation
        - Configure TLS section in your ingress
     
+    6. Azure Key Vault integration:
+       - Use Azure Key Vault CSI driver for secrets management
+       - Configure SecretProviderClass for accessing Key Vault secrets
+    
     Ingress Controller IP: ${module.ingress.ingress_controller_ip}
     Ingress Class: nginx
+    Load Balancer Type: Internal (private)
     Cert Manager: ${module.ingress.cert_manager_enabled ? "Enabled" : "Disabled"}
+    Azure Key Vault CSI: ${module.ingress.azure_key_vault_csi_enabled ? "Enabled" : "Disabled"}
+    
+    Security Notes:
+    - All ingress traffic is routed through internal load balancer
+    - TLS certificates are managed by cert-manager with Let's Encrypt
+    - Secrets are managed through Azure Key Vault CSI driver
+    - High availability with multiple replicas
+    - Resource limits configured for production workloads
   EOT
 }

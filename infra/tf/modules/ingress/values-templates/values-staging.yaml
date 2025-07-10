@@ -1,0 +1,48 @@
+controller:
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
+      %{ if enable_internal_lb }
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "${subnet_name}"
+      %{ endif }
+  replicaCount: ${replica_count}
+  resources:
+    requests:
+      cpu: ${cpu_requests}
+      memory: ${memory_requests}
+    limits:
+      cpu: ${cpu_limits}
+      memory: ${memory_limits}
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+          topologyKey: kubernetes.io/hostname
+
+# Staging-specific configurations
+defaultBackend:
+  enabled: true
+  resources:
+    requests:
+      cpu: 20m
+      memory: 30Mi
+    limits:
+      cpu: 50m
+      memory: 60Mi
+
+# Enable metrics for monitoring
+metrics:
+  enabled: ${enable_metrics}
+  service:
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "10254"

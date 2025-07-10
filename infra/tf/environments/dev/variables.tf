@@ -108,6 +108,79 @@ variable "jumpbox_admin_ssh_public_key" {
   default     = "" # Only needed when jumpbox is enabled
 }
 
+# Ingress Controller Configuration
+variable "enable_internal_load_balancer" {
+  description = "Enable internal load balancer for ingress controller"
+  type        = bool
+  default     = false # Dev: public load balancer for easy access
+}
+
+variable "ingress_replica_count" {
+  description = "Number of ingress controller replicas"
+  type        = number
+  default     = 1 # Dev: single replica for cost optimization
+}
+
+variable "ingress_cpu_requests" {
+  description = "CPU requests for ingress controller"
+  type        = string
+  default     = "100m" # Dev: minimal resources
+}
+
+variable "ingress_memory_requests" {
+  description = "Memory requests for ingress controller"
+  type        = string
+  default     = "90Mi" # Dev: minimal resources
+}
+
+variable "ingress_cpu_limits" {
+  description = "CPU limits for ingress controller"
+  type        = string
+  default     = "200m" # Dev: low limits for cost control
+}
+
+variable "ingress_memory_limits" {
+  description = "Memory limits for ingress controller"
+  type        = string
+  default     = "180Mi" # Dev: low limits for cost control
+}
+
+variable "ingress_enable_metrics" {
+  description = "Enable metrics collection for ingress controller"
+  type        = bool
+  default     = true # Dev: enable basic metrics
+}
+
+variable "ingress_enable_prometheus_rule" {
+  description = "Enable Prometheus monitoring rules"
+  type        = bool
+  default     = false # Dev: no advanced monitoring rules
+}
+
+variable "ingress_subnet_name" {
+  description = "Subnet name for internal load balancer"
+  type        = string
+  default     = "aks-subnet"
+}
+
+variable "enable_cert_manager" {
+  description = "Enable cert-manager for automatic certificate management"
+  type        = bool
+  default     = true # Dev: enable Let's Encrypt certificates
+}
+
+variable "letsencrypt_email" {
+  description = "Email address for Let's Encrypt certificates"
+  type        = string
+  default     = "admin@example.com" # Update with actual email
+}
+
+variable "enable_azure_key_vault_csi" {
+  description = "Enable Azure Key Vault CSI driver"
+  type        = bool
+  default     = false # Dev: not needed for development
+}
+
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
