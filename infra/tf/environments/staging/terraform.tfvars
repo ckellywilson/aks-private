@@ -1,7 +1,7 @@
 # Staging Environment Configuration
 environment                  = "staging"
-location                     = "East US"
-resource_group_name          = "rg-aks-multi-env-staging-eastus"
+location                     = "Central US"
+resource_group_name          = "rg-aks-multi-env-staging-centralus"
 cluster_name                 = "aks-multi-env-staging"
 acr_name                     = "acrmultienvstaging"
 log_analytics_workspace_name = "law-aks-multi-env-staging"

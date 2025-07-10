@@ -7,31 +7,31 @@ variable "environment" {
 variable "location" {
   description = "Azure region for resources"
   type        = string
-  default     = "East US"
+  default     = "Central US"
 }
 
 variable "resource_group_name" {
   description = "Resource group name"
   type        = string
-  default     = "rg-aks-dev-eastus-001"
+  default     = "rg-aks-dev-centralus-001"
 }
 
 variable "cluster_name" {
   description = "AKS cluster name"
   type        = string
-  default     = "aks-dev-eastus-001"
+  default     = "aks-dev-centralus-001"
 }
 
 variable "acr_name" {
   description = "Azure Container Registry name"
   type        = string
-  default     = "acraksdeveastus001"
+  default     = "acraksdevcentralus001"
 }
 
 variable "log_analytics_workspace_name" {
   description = "Log Analytics workspace name"
   type        = string
-  default     = "law-aks-dev-eastus-001"
+  default     = "law-aks-dev-centralus-001"
 }
 
 # Networking variables

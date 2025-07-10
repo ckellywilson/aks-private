@@ -1,12 +1,12 @@
 # Development Environment Configuration
 environment = "dev"
-location    = "East US"
+location    = "Central US"
 
 # Resource naming
-resource_group_name          = "rg-aks-dev-eastus-001"
-cluster_name                 = "aks-dev-eastus-001"
-acr_name                     = "acraksdeveastus001"
-log_analytics_workspace_name = "law-aks-dev-eastus-001"
+resource_group_name          = "rg-aks-dev-centralus-001"
+cluster_name                 = "aks-dev-centralus-001"
+acr_name                     = "acraksdevcentralus001"
+log_analytics_workspace_name = "law-aks-dev-centralus-001"
 
 # Development-specific settings (public access for easy development)
 enable_private_cluster            = false
