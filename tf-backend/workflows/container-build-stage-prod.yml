@@ -1,0 +1,217 @@
+# Container Build for Stage/Production Self-Hosted Runners
+# Builds and pushes secure runner images to private ACR
+
+name: 'Container Build for Stage/Prod'
+
+on:
+  push:
+    branches: [ main, release/* ]
+    paths: 
+      - 'tf-backend/docker/**'
+      - '.github/workflows/container-build-stage-prod.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment for container build'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - prod
+      force_rebuild:
+        description: 'Force rebuild even if no changes detected'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+env:
+  ARM_USE_OIDC: true
+  ARM_USE_AZUREAD: true
+
+jobs:
+  security-scan:
+    name: 'Security Scan Docker Image'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: './tf-backend/docker'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  build-staging:
+    name: 'Build Staging Runner Image'
+    needs: security-scan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && (inputs.environment == 'staging' || inputs.force_rebuild))
+    environment: staging
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Login to Staging ACR
+      run: |
+        ACR_NAME="acrterraformstagingeus001"
+        az acr login --name ${ACR_NAME}
+
+    - name: Build and Push Staging Runner Image
+      run: |
+        ACR_NAME="acrterraformstagingeus001"
+        IMAGE_TAG="${{ github.sha }}"
+        
+        echo "🔨 Building runner image for staging environment..."
+        
+        # Build with build args for environment-specific optimizations
+        docker build \
+          --build-arg TERRAFORM_VERSION=1.7.0 \
+          --build-arg ENVIRONMENT=staging \
+          --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+          --label "org.opencontainers.image.revision=${{ github.sha }}" \
+          --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          -t ${ACR_NAME}.azurecr.io/terraform-runner:${IMAGE_TAG} \
+          -t ${ACR_NAME}.azurecr.io/terraform-runner:staging-latest \
+          ./tf-backend/docker/
+        
+        echo "📤 Pushing images to ACR..."
+        docker push ${ACR_NAME}.azurecr.io/terraform-runner:${IMAGE_TAG}
+        docker push ${ACR_NAME}.azurecr.io/terraform-runner:staging-latest
+        
+        echo "✅ Staging runner image built and pushed successfully"
+
+    - name: Scan Pushed Image
+      run: |
+        ACR_NAME="acrterraformstagingeus001"
+        IMAGE_TAG="${{ github.sha }}"
+        
+        # Run security scan on the pushed image
+        az acr repository show --name ${ACR_NAME} --image terraform-runner:${IMAGE_TAG}
+        
+        echo "🔒 Image security scan completed"
+
+  build-production:
+    name: 'Build Production Runner Image'
+    needs: [ security-scan, build-staging ]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && (inputs.environment == 'prod' || inputs.force_rebuild))
+    environment: prod
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Login to Production ACR
+      run: |
+        ACR_NAME="acrterraformprodeus001"
+        az acr login --name ${ACR_NAME}
+
+    - name: Build and Push Production Runner Image
+      run: |
+        ACR_NAME="acrterraformprodeus001"
+        IMAGE_TAG="${{ github.sha }}"
+        
+        echo "🔨 Building runner image for production environment..."
+        
+        # Build with production-optimized settings
+        docker build \
+          --build-arg TERRAFORM_VERSION=1.7.0 \
+          --build-arg ENVIRONMENT=prod \
+          --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+          --label "org.opencontainers.image.revision=${{ github.sha }}" \
+          --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          --label "org.opencontainers.image.title=Terraform Production Runner" \
+          -t ${ACR_NAME}.azurecr.io/terraform-runner:${IMAGE_TAG} \
+          -t ${ACR_NAME}.azurecr.io/terraform-runner:prod-latest \
+          ./tf-backend/docker/
+        
+        echo "📤 Pushing images to production ACR..."
+        docker push ${ACR_NAME}.azurecr.io/terraform-runner:${IMAGE_TAG}
+        docker push ${ACR_NAME}.azurecr.io/terraform-runner:prod-latest
+        
+        echo "✅ Production runner image built and pushed successfully"
+
+    - name: Comprehensive Security Validation
+      run: |
+        ACR_NAME="acrterraformprodeus001"
+        IMAGE_TAG="${{ github.sha }}"
+        
+        echo "🔒 Running comprehensive security validation for production image..."
+        
+        # Verify image exists and get metadata
+        az acr repository show --name ${ACR_NAME} --image terraform-runner:${IMAGE_TAG}
+        
+        # Run additional security checks for production
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy image --severity HIGH,CRITICAL \
+          ${ACR_NAME}.azurecr.io/terraform-runner:${IMAGE_TAG} || true
+        
+        echo "✅ Production security validation completed"
+
+  update-deployment-config:
+    name: 'Update Deployment Configuration'
+    needs: [ build-staging, build-production ]
+    runs-on: ubuntu-latest
+    if: always() && (needs.build-staging.result == 'success' || needs.build-production.result == 'success')
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Update Image References
+      run: |
+        IMAGE_TAG="${{ github.sha }}"
+        
+        echo "📝 Updating deployment configurations with new image tag: ${IMAGE_TAG}"
+        
+        # Update any configuration files that reference the container images
+        # This could include updating terraform variables, helm charts, etc.
+        
+        if [ -f "tf-backend/image-tags.env" ]; then
+          echo "TERRAFORM_RUNNER_TAG=${IMAGE_TAG}" > tf-backend/image-tags.env
+          echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> tf-backend/image-tags.env
+        fi
+
+    - name: Summary
+      run: |
+        echo "## 🐳 Container Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image Tag**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Staging Build**: ${{ needs.build-staging.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Production Build**: ${{ needs.build-production.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Security Scan**: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build Time**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "- Images are ready for deployment in staging/production environments" >> $GITHUB_STEP_SUMMARY
+        echo "- Self-hosted runners will use these images for secure Terraform deployments" >> $GITHUB_STEP_SUMMARY

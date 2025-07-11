@@ -1,0 +1,168 @@
+# Development Environment Terraform Deployment
+# Uses GitHub-hosted runners with restricted public storage access
+
+name: 'Terraform Dev Deployment'
+
+on:
+  push:
+    branches: [ develop ]
+    paths:
+      - 'infra/tf/**'
+      - '.github/workflows/terraform-dev.yml'
+  pull_request:
+    branches: [ develop ]
+    paths:
+      - 'infra/tf/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write  # For PR comments
+  security-events: write  # For security scanning
+
+env:
+  ARM_USE_OIDC: true
+  ARM_USE_AZUREAD: true
+  ARM_SKIP_PROVIDER_REGISTRATION: true
+  ENVIRONMENT: dev
+
+jobs:
+  terraform-dev:
+    name: 'Terraform Dev'
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: terraform-dev-${{ github.ref }}
+      cancel-in-progress: false  # Don't cancel infrastructure changes
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ~1.7.0
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Terraform Format Check
+      working-directory: infra/tf
+      run: terraform fmt -check -recursive
+
+    - name: Setup Environment Configuration
+      working-directory: infra/tf
+      run: |
+        # Copy environment-specific configuration
+        cp environments/${{ env.ENVIRONMENT }}/providers.tf .
+        cp environments/${{ env.ENVIRONMENT }}/terraform.tfvars .
+
+    - name: Terraform Init
+      working-directory: infra/tf
+      run: |
+        terraform init \
+          -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+          -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+          -backend-config="container_name=terraform-state" \
+          -backend-config="key=${{ env.ENVIRONMENT }}.tfstate"
+
+    - name: Terraform Validate
+      working-directory: infra/tf
+      run: terraform validate
+
+    - name: Terraform Plan
+      working-directory: infra/tf
+      run: |
+        terraform plan \
+          -var-file="terraform.tfvars" \
+          -out="${{ env.ENVIRONMENT }}.tfplan" \
+          -detailed-exitcode
+      id: plan
+
+    - name: Comment PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const plan = fs.readFileSync('infra/tf/${{ env.ENVIRONMENT }}.tfplan.txt', 'utf8');
+          const maxGitHubBodyCharacters = 65536;
+          
+          function chunkSubstr(str, size) {
+            const numChunks = Math.ceil(str.length / size)
+            const chunks = new Array(numChunks)
+            for (let i = 0, o = 0; i < numChunks; ++i, o += size) {
+              chunks[i] = str.substr(o, size)
+            }
+            return chunks
+          }
+          
+          const planChunks = chunkSubstr(plan, maxGitHubBodyCharacters);
+          
+          for (let i = 0; i < planChunks.length; i++) {
+            const output = `### Terraform Plan Output (Part ${i + 1}/${planChunks.length})
+            
+            \`\`\`
+            ${planChunks[i]}
+            \`\`\`
+            
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Working Directory: \`infra/tf\`, Workflow: \`${{ github.workflow }}\`*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+          }
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+      working-directory: infra/tf
+      run: terraform apply "${{ env.ENVIRONMENT }}.tfplan"
+
+    - name: Post-Deployment Validation
+      if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+      working-directory: infra/tf
+      run: |
+        # Validate deployment
+        terraform output -json > outputs.json
+        
+        # Check if AKS cluster is accessible
+        if terraform output -raw cluster_name >/dev/null 2>&1; then
+          CLUSTER_NAME=$(terraform output -raw cluster_name)
+          RG_NAME=$(terraform output -raw resource_group_name)
+          
+          echo "Validating AKS cluster: $CLUSTER_NAME"
+          az aks get-credentials --resource-group "$RG_NAME" --name "$CLUSTER_NAME" --overwrite-existing
+          kubectl get nodes
+        fi
+
+    - name: Security Scan
+      if: always()
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        scan-ref: 'infra/tf'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Upload Terraform Plan
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-plan-dev
+        path: infra/tf/${{ env.ENVIRONMENT }}.tfplan
+        retention-days: 30

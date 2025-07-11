@@ -1,0 +1,249 @@
+# Enhanced Variable Definitions with Validation
+# This template provides comprehensive variable definitions for multi-environment deployments
+
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+  
+  validation {
+    condition = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "Environment must be dev, staging, or prod."
+  }
+}
+
+variable "location" {
+  description = "Azure region for resources"
+  type        = string
+  default     = "East US"
+  
+  validation {
+    condition = contains([
+      "East US", "East US 2", "Central US", "West US", "West US 2", "West US 3",
+      "North Europe", "West Europe", "UK South", "UK West",
+      "Southeast Asia", "East Asia", "Australia East", "Australia Southeast"
+    ], var.location)
+    error_message = "Location must be a valid Azure region."
+  }
+}
+
+variable "location_short" {
+  description = "Short code for Azure region"
+  type        = string
+  default     = "eus"
+  
+  validation {
+    condition = length(var.location_short) <= 4
+    error_message = "Location short code must be 4 characters or less."
+  }
+}
+
+variable "resource_group_name" {
+  description = "Name of the resource group"
+  type        = string
+  default     = ""
+}
+
+variable "owner_email" {
+  description = "Email address of the resource owner"
+  type        = string
+  
+  validation {
+    condition = can(regex("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.owner_email))
+    error_message = "Owner email must be a valid email address."
+  }
+}
+
+variable "cost_center" {
+  description = "Cost center for billing and tracking"
+  type        = string
+  default     = "IT-Infrastructure"
+}
+
+variable "git_repository" {
+  description = "Git repository URL for tracking"
+  type        = string
+  default     = "https://github.com/organization/aks-private"
+}
+
+variable "git_commit_sha" {
+  description = "Git commit SHA for tracking"
+  type        = string
+  default     = "unknown"
+}
+
+variable "data_classification" {
+  description = "Data classification level"
+  type        = string
+  default     = "Internal"
+  
+  validation {
+    condition = contains(["Public", "Internal", "Confidential", "Restricted"], var.data_classification)
+    error_message = "Data classification must be Public, Internal, Confidential, or Restricted."
+  }
+}
+
+variable "compliance_scope" {
+  description = "Compliance scope for the resources"
+  type        = string
+  default     = "Standard"
+  
+  validation {
+    condition = contains(["Standard", "PCI", "HIPAA", "SOX", "ISO27001"], var.compliance_scope)
+    error_message = "Compliance scope must be a recognized standard."
+  }
+}
+
+# Storage-specific variables
+variable "storage_account_replication" {
+  description = "Storage account replication type"
+  type        = string
+  default     = "ZRS"
+  
+  validation {
+    condition = contains(["LRS", "ZRS", "GRS", "GZRS", "RA-GRS", "RA-GZRS"], var.storage_account_replication)
+    error_message = "Storage replication must be LRS, ZRS, GRS, GZRS, RA-GRS, or RA-GZRS."
+  }
+}
+
+variable "allowed_ip_ranges" {
+  description = "Allowed IP ranges for storage account access (dev environment only)"
+  type        = list(string)
+  default     = []
+  
+  validation {
+    condition = alltrue([
+      for ip in var.allowed_ip_ranges : can(cidrhost(ip, 0))
+    ])
+    error_message = "All IP ranges must be valid CIDR blocks."
+  }
+}
+
+# Network-specific variables
+variable "vnet_address_space" {
+  description = "Address space for the virtual network"
+  type        = string
+  default     = "10.100.0.0/16"
+  
+  validation {
+    condition = can(cidrhost(var.vnet_address_space, 0))
+    error_message = "VNet address space must be a valid CIDR block."
+  }
+}
+
+variable "private_subnet_address_prefix" {
+  description = "Address prefix for the private subnet"
+  type        = string
+  default     = "10.100.1.0/24"
+  
+  validation {
+    condition = can(cidrhost(var.private_subnet_address_prefix, 0))
+    error_message = "Private subnet address prefix must be a valid CIDR block."
+  }
+}
+
+variable "private_endpoints_subnet_address_prefix" {
+  description = "Address prefix for the private endpoints subnet"
+  type        = string
+  default     = "10.100.2.0/24"
+  
+  validation {
+    condition = can(cidrhost(var.private_endpoints_subnet_address_prefix, 0))
+    error_message = "Private endpoints subnet address prefix must be a valid CIDR block."
+  }
+}
+
+# Container Registry variables
+variable "acr_sku" {
+  description = "SKU for Azure Container Registry"
+  type        = string
+  default     = "Premium"
+  
+  validation {
+    condition = contains(["Basic", "Standard", "Premium"], var.acr_sku)
+    error_message = "ACR SKU must be Basic, Standard, or Premium."
+  }
+}
+
+# Monitoring and logging variables
+variable "log_analytics_retention_days" {
+  description = "Log Analytics workspace retention in days"
+  type        = number
+  default     = 90
+  
+  validation {
+    condition = var.log_analytics_retention_days >= 30 && var.log_analytics_retention_days <= 730
+    error_message = "Log Analytics retention must be between 30 and 730 days."
+  }
+}
+
+variable "enable_diagnostic_settings" {
+  description = "Enable diagnostic settings for resources"
+  type        = bool
+  default     = true
+}
+
+variable "enable_security_alerts" {
+  description = "Enable security alerts and monitoring"
+  type        = bool
+  default     = true
+}
+
+# Container instance variables (for self-hosted runners)
+variable "container_instance_cpu" {
+  description = "CPU cores for container instances"
+  type        = number
+  default     = 2
+  
+  validation {
+    condition = var.container_instance_cpu >= 1 && var.container_instance_cpu <= 4
+    error_message = "Container instance CPU must be between 1 and 4 cores."
+  }
+}
+
+variable "container_instance_memory" {
+  description = "Memory in GB for container instances"
+  type        = number
+  default     = 4
+  
+  validation {
+    condition = var.container_instance_memory >= 1 && var.container_instance_memory <= 16
+    error_message = "Container instance memory must be between 1 and 16 GB."
+  }
+}
+
+# Feature flags
+variable "enable_private_endpoints" {
+  description = "Enable private endpoints (staging/prod only)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_network_security_groups" {
+  description = "Enable network security groups"
+  type        = bool
+  default     = true
+}
+
+variable "enable_ddos_protection" {
+  description = "Enable DDoS protection (premium environments only)"
+  type        = bool
+  default     = false
+}
+
+# Backup and disaster recovery
+variable "backup_retention_days" {
+  description = "Backup retention period in days"
+  type        = number
+  default     = 30
+  
+  validation {
+    condition = var.backup_retention_days >= 7 && var.backup_retention_days <= 365
+    error_message = "Backup retention must be between 7 and 365 days."
+  }
+}
+
+variable "geo_redundant_backup" {
+  description = "Enable geo-redundant backup"
+  type        = bool
+  default     = false
+}

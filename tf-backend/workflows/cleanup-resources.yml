@@ -1,0 +1,165 @@
+# Automated cleanup of orphaned resources
+# Runs daily to clean up container instances and temporary resources
+
+name: 'Cleanup Orphaned Resources'
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to clean up (or all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - dev
+        - staging
+        - prod
+      dry_run:
+        description: 'Dry run (show what would be deleted)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  cleanup:
+    name: 'Cleanup Resources'
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        environment: ${{ github.event.inputs.environment == 'all' && fromJson('["dev", "staging", "prod"]') || fromJson(format('["{0}"]', github.event.inputs.environment || 'all')) }}
+    
+    steps:
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Cleanup Orphaned Container Instances
+      run: |
+        ENV="${{ matrix.environment }}"
+        DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+        RG_NAME="rg-terraform-state-${ENV}-eus-001"
+        
+        echo "Cleaning up environment: $ENV"
+        echo "Dry run mode: $DRY_RUN"
+        
+        # Find container instances older than 24 hours
+        CUTOFF_TIME=$(date -d '24 hours ago' --iso-8601)
+        
+        echo "Looking for containers created before: $CUTOFF_TIME"
+        
+        CONTAINERS=$(az container list \
+          --resource-group "$RG_NAME" \
+          --query "[?creationTime<'$CUTOFF_TIME' && contains(name, 'github-runner')].{name:name, resourceGroup:resourceGroup, created:creationTime}" \
+          --output json 2>/dev/null || echo "[]")
+        
+        if [ "$CONTAINERS" = "[]" ] || [ -z "$CONTAINERS" ]; then
+          echo "No orphaned containers found in $ENV environment"
+        else
+          echo "Found orphaned containers in $ENV environment:"
+          echo "$CONTAINERS" | jq -r '.[] | "- \(.name) (created: \(.created))"'
+          
+          if [ "$DRY_RUN" = "false" ]; then
+            echo "$CONTAINERS" | jq -r '.[] | "\(.name) \(.resourceGroup)"' | \
+            while read name rg; do
+              echo "Deleting orphaned container: $name"
+              az container delete --name "$name" --resource-group "$rg" --yes || true
+            done
+          else
+            echo "DRY RUN: Would delete the above containers"
+          fi
+        fi
+
+    - name: Cleanup Old ACR Images
+      if: matrix.environment != 'dev'
+      run: |
+        ENV="${{ matrix.environment }}"
+        DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+        ACR_NAME="acrterraform${ENV}eus001"
+        
+        echo "Cleaning up old images in ACR: $ACR_NAME"
+        
+        # Find images older than 30 days (keep last 10 versions)
+        OLD_IMAGES=$(az acr repository show-manifests \
+          --name "$ACR_NAME" \
+          --repository terraform-runner \
+          --orderby time_desc \
+          --query "[10:].digest" \
+          --output tsv 2>/dev/null || echo "")
+        
+        if [ -z "$OLD_IMAGES" ]; then
+          echo "No old images found in $ACR_NAME"
+        else
+          echo "Found old images in $ACR_NAME:"
+          echo "$OLD_IMAGES"
+          
+          if [ "$DRY_RUN" = "false" ]; then
+            echo "$OLD_IMAGES" | while read digest; do
+              echo "Deleting old image: $digest"
+              az acr repository delete \
+                --name "$ACR_NAME" \
+                --manifest "terraform-runner@$digest" \
+                --yes || true
+            done
+          else
+            echo "DRY RUN: Would delete the above images"
+          fi
+        fi
+
+    - name: Cleanup Terraform State Locks
+      run: |
+        ENV="${{ matrix.environment }}"
+        DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+        STORAGE_ACCOUNT="st${ENV}tfeus001"
+        
+        echo "Checking for stale Terraform state locks in: $STORAGE_ACCOUNT"
+        
+        # Check for lock files older than 2 hours
+        LOCK_FILES=$(az storage blob list \
+          --container-name terraform-state \
+          --account-name "$STORAGE_ACCOUNT" \
+          --auth-mode login \
+          --query "[?contains(name, '.tflock') && properties.lastModified < '$(date -d '2 hours ago' --iso-8601)'].name" \
+          --output tsv 2>/dev/null || echo "")
+        
+        if [ -z "$LOCK_FILES" ]; then
+          echo "No stale lock files found in $ENV environment"
+        else
+          echo "Found stale lock files in $ENV environment:"
+          echo "$LOCK_FILES"
+          
+          if [ "$DRY_RUN" = "false" ]; then
+            echo "$LOCK_FILES" | while read lock_file; do
+              echo "Removing stale lock file: $lock_file"
+              az storage blob delete \
+                --container-name terraform-state \
+                --name "$lock_file" \
+                --account-name "$STORAGE_ACCOUNT" \
+                --auth-mode login || true
+            done
+          else
+            echo "DRY RUN: Would delete the above lock files"
+          fi
+        fi
+
+    - name: Report Cleanup Summary
+      run: |
+        ENV="${{ matrix.environment }}"
+        echo "Cleanup completed for environment: $ENV"
+        
+        # Generate summary report
+        echo "## Cleanup Summary for $ENV" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: $ENV" >> $GITHUB_STEP_SUMMARY
+        echo "- **Dry Run**: ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Timestamp**: $(date)" >> $GITHUB_STEP_SUMMARY

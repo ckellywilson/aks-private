@@ -1,0 +1,318 @@
+# Staging/Production Environment Terraform Deployment
+# Uses self-hosted runners in private VNet with enhanced security
+
+name: 'Terraform Stage/Prod Deployment'
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'infra/tf/**'
+      - '.github/workflows/terraform-stage-prod.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - prod
+      destroy:
+        description: 'Destroy infrastructure'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ARM_USE_OIDC: true
+  ARM_USE_AZUREAD: true
+  ARM_SKIP_PROVIDER_REGISTRATION: true
+
+jobs:
+  container-build:
+    name: 'Build Runner Container'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.destroy)
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Login to ACR
+      run: |
+        ENV="${{ github.event.inputs.environment || 'staging' }}"
+        ACR_NAME="acrterraform${ENV}eus001"
+        az acr login --name ${ACR_NAME}
+
+    - name: Build and Push Runner Image
+      run: |
+        ENV="${{ github.event.inputs.environment || 'staging' }}"
+        ACR_NAME="acrterraform${ENV}eus001"
+        
+        docker build -t ${ACR_NAME}.azurecr.io/terraform-runner:${{ github.sha }} \
+                    -t ${ACR_NAME}.azurecr.io/terraform-runner:latest \
+                    ./tf-backend/docker/
+        
+        docker push ${ACR_NAME}.azurecr.io/terraform-runner:${{ github.sha }}
+        docker push ${ACR_NAME}.azurecr.io/terraform-runner:latest
+
+  deploy-private-runner:
+    name: 'Deploy Private Runner'
+    needs: container-build
+    runs-on: ubuntu-latest
+    if: always() && (needs.container-build.result == 'success' || inputs.destroy)
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    
+    outputs:
+      runner-name: ${{ steps.deploy-runner.outputs.runner-name }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Deploy Private Self-Hosted Runner
+      id: deploy-runner
+      run: |
+        ENV="${{ github.event.inputs.environment || 'staging' }}"
+        RUNNER_NAME="${ENV}-runner-${{ github.run_id }}"
+        ACR_NAME="acrterraform${ENV}eus001"
+        
+        echo "runner-name=${RUNNER_NAME}" >> $GITHUB_OUTPUT
+        
+        # Create container instance in private VNet
+        az container create \
+          --resource-group "rg-terraform-state-${ENV}-eus-001" \
+          --name "github-${RUNNER_NAME}" \
+          --image "${ACR_NAME}.azurecr.io/terraform-runner:latest" \
+          --subnet "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/rg-terraform-state-${ENV}-eus-001/providers/Microsoft.Network/virtualNetworks/vnet-terraform-${ENV}/subnets/snet-private" \
+          --environment-variables \
+            GITHUB_TOKEN="${{ secrets.GH_PAT }}" \
+            GITHUB_REPOSITORY="${{ github.repository }}" \
+            RUNNER_NAME="${RUNNER_NAME}" \
+            ENVIRONMENT="${ENV}" \
+            RUNNER_LABELS="self-hosted,terraform,${ENV},private" \
+          --assign-identity "${{ secrets.AZURE_CLIENT_ID }}" \
+          --registry-login-server "${ACR_NAME}.azurecr.io" \
+          --cpu 2 \
+          --memory 4 \
+          --restart-policy Never \
+          --os-type Linux
+
+    - name: Wait for Runner Registration
+      run: |
+        ENV="${{ github.event.inputs.environment || 'staging' }}"
+        RUNNER_NAME="${ENV}-runner-${{ github.run_id }}"
+        
+        echo "Waiting for self-hosted runner to register..."
+        sleep 90
+        
+        # Verify runner is available
+        for i in {1..20}; do
+          if curl -H "Authorization: token ${{ secrets.GH_PAT }}" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/runners" \
+                  | jq -r '.runners[].name' | grep -q "${RUNNER_NAME}"; then
+            echo "✅ Runner registered successfully"
+            break
+          fi
+          if [ $i -eq 20 ]; then
+            echo "❌ Runner registration timed out"
+            exit 1
+          fi
+          echo "⏳ Waiting for runner registration... (attempt $i/20)"
+          sleep 30
+        done
+
+  terraform-deploy:
+    name: 'Terraform Deploy'
+    needs: deploy-private-runner
+    runs-on: [ self-hosted, '${{ needs.deploy-private-runner.outputs.runner-name }}' ]
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    timeout-minutes: 60
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Environment
+      run: |
+        ENV="${{ github.event.inputs.environment || 'staging' }}"
+        echo "ENVIRONMENT=${ENV}" >> $GITHUB_ENV
+        echo "🚀 Starting Terraform deployment for ${ENV}"
+
+    - name: Verify Private Network Connectivity
+      run: |
+        echo "🔍 Verifying private network connectivity..."
+        
+        # Test Azure CLI connectivity
+        az account show --output none
+        echo "✅ Azure CLI authenticated"
+        
+        # Test storage account connectivity
+        STORAGE_ACCOUNT="staks${ENVIRONMENT}eus001tfstate"
+        az storage account show --name ${STORAGE_ACCOUNT} --output none
+        echo "✅ Storage account accessible"
+
+    - name: Security Pre-flight Checks
+      run: |
+        echo "🔒 Running security pre-flight checks..."
+        
+        # Verify tool versions
+        echo "Tool versions:"
+        terraform version
+        az version --output table
+        kubectl version --client=true
+        helm version
+        
+        # Check for sensitive data exposure
+        if grep -r "password\|secret\|key" infra/tf/ --exclude-dir=.terraform || true; then
+          echo "⚠️ Potential sensitive data found in Terraform files"
+        fi
+
+    - name: Terraform Init
+      working-directory: infra/tf
+      run: |
+        cp "environments/${ENVIRONMENT}/providers.tf" .
+        terraform init -input=false
+
+    - name: Terraform Validate
+      working-directory: infra/tf
+      run: terraform validate
+
+    - name: Terraform Plan
+      working-directory: infra/tf
+      run: |
+        if [ "${{ inputs.destroy }}" = "true" ]; then
+          terraform plan -destroy \
+            -var-file="environments/${ENVIRONMENT}/terraform.tfvars" \
+            -out="${ENVIRONMENT}-destroy.tfplan" \
+            -input=false
+        else
+          terraform plan \
+            -var-file="environments/${ENVIRONMENT}/terraform.tfvars" \
+            -out="${ENVIRONMENT}.tfplan" \
+            -input=false
+        fi
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+      working-directory: infra/tf
+      run: |
+        if [ "${{ inputs.destroy }}" = "true" ]; then
+          echo "🔥 Destroying infrastructure for ${ENVIRONMENT}..."
+          terraform apply -input=false "${ENVIRONMENT}-destroy.tfplan"
+        else
+          echo "🚀 Applying infrastructure for ${ENVIRONMENT}..."
+          terraform apply -input=false "${ENVIRONMENT}.tfplan"
+        fi
+
+    - name: Post-deployment Validation
+      if: success() && inputs.destroy != true
+      run: |
+        echo "✅ Running post-deployment validation..."
+        
+        # Extract outputs and validate key resources
+        cd infra/tf
+        terraform output -json > outputs.json
+        
+        # Validate AKS cluster if deployed
+        if jq -e '.aks_cluster_name' outputs.json > /dev/null; then
+          AKS_NAME=$(jq -r '.aks_cluster_name.value' outputs.json)
+          RG_NAME=$(jq -r '.resource_group_name.value' outputs.json)
+          
+          az aks show --name "$AKS_NAME" --resource-group "$RG_NAME" --output none
+          echo "✅ AKS cluster validated: $AKS_NAME"
+          
+          # Get kubeconfig and test connectivity
+          az aks get-credentials --name "$AKS_NAME" --resource-group "$RG_NAME" --overwrite-existing
+          kubectl cluster-info
+          echo "✅ Kubernetes connectivity validated"
+        fi
+
+    - name: Store Deployment Artifacts
+      if: always()
+      run: |
+        mkdir -p artifacts
+        cd infra/tf
+        
+        if [ -f "${ENVIRONMENT}.tfplan" ]; then
+          cp "${ENVIRONMENT}.tfplan" ../../artifacts/
+        fi
+        
+        if [ -f "${ENVIRONMENT}-destroy.tfplan" ]; then
+          cp "${ENVIRONMENT}-destroy.tfplan" ../../artifacts/
+        fi
+        
+        if [ -f "outputs.json" ]; then
+          cp outputs.json ../../artifacts/
+        fi
+
+    - name: Cleanup Workspace
+      if: always()
+      run: |
+        echo "🧹 Cleaning up workspace..."
+        # Remove sensitive files
+        find . -name "*.tfstate*" -delete 2>/dev/null || true
+        find . -name ".terraform" -type d -exec rm -rf {} + 2>/dev/null || true
+
+  cleanup-runner:
+    name: 'Cleanup Runner Resources'
+    needs: [ deploy-private-runner, terraform-deploy ]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Remove Container Instance
+      run: |
+        ENV="${{ github.event.inputs.environment || 'staging' }}"
+        RUNNER_NAME="${ENV}-runner-${{ github.run_id }}"
+        
+        echo "🧹 Cleaning up container instance: github-${RUNNER_NAME}"
+        
+        az container delete \
+          --resource-group "rg-terraform-state-${ENV}-eus-001" \
+          --name "github-${RUNNER_NAME}" \
+          --yes || true
+        
+        echo "✅ Cleanup completed"
+
+    - name: Deployment Summary
+      if: always()
+      run: |
+        ENV="${{ github.event.inputs.environment || 'staging' }}"
+        ACTION="${{ inputs.destroy == true && 'Destroy' || 'Deploy' }}"
+        STATUS="${{ needs.terraform-deploy.result }}"
+        
+        echo "## 🚀 Terraform ${ACTION} Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${ENV}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Action**: ${ACTION}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ${STATUS}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Runner**: ${{ needs.deploy-private-runner.outputs.runner-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Completed**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY

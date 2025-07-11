@@ -1,0 +1,218 @@
+# Development Environment Terraform Deployment
+# Uses GitHub-hosted runners with controlled public storage access
+
+name: 'Terraform Dev Deployment'
+
+on:
+  push:
+    branches: [ develop ]
+    paths:
+      - 'infra/tf/**'
+      - '.github/workflows/terraform-dev.yml'
+  pull_request:
+    branches: [ develop ]
+    paths:
+      - 'infra/tf/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write  # For PR comments
+  security-events: write  # For security scanning
+
+env:
+  ARM_USE_OIDC: true
+  ARM_USE_AZUREAD: true
+  ARM_SKIP_PROVIDER_REGISTRATION: true
+  ENVIRONMENT: dev
+
+jobs:
+  terraform-dev:
+    name: 'Terraform Dev'
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: terraform-dev-${{ github.ref }}
+      cancel-in-progress: false  # Don't cancel infrastructure changes
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure Git (Security)
+      run: |
+        git config --global user.email "actions@github.com"
+        git config --global user.name "GitHub Actions"
+        git config --global init.defaultBranch main
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: "1.7.0"
+        terraform_wrapper: false  # For better output handling
+
+    - name: Security Scan - Terraform
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: infra/tf
+        framework: terraform
+        output_format: sarif
+        output_file_path: reports/checkov.sarif
+      continue-on-error: true  # Don't fail the build on security findings
+
+    - name: Upload Security Scan Results
+      uses: github/codeql-action/upload-sarif@v3
+      if: success() || failure()
+      with:
+        sarif_file: reports/checkov.sarif
+
+    - name: Cache Terraform
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.terraform.d/plugin-cache
+          **/.terraform
+        key: terraform-dev-${{ hashFiles('**/.terraform.lock.hcl') }}
+        restore-keys: terraform-dev-
+
+    - name: Workflow Telemetry
+      run: |
+        echo "::notice title=Deployment Started::Environment: ${{ env.ENVIRONMENT }}"
+        echo "start-time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+        
+        # Create reports directory
+        mkdir -p reports
+
+    - name: Terraform Init (Dev)
+      working-directory: infra/tf
+      run: |
+        cp environments/dev/providers.tf .
+        terraform init -input=false
+
+    - name: Terraform Validate
+      working-directory: infra/tf
+      run: terraform validate
+
+    - name: Terraform Format Check
+      working-directory: infra/tf
+      run: terraform fmt -check -recursive
+
+    - name: Terraform Plan (Dev)
+      working-directory: infra/tf
+      run: |
+        terraform plan \
+          -var-file="environments/dev/terraform.tfvars" \
+          -out=dev.tfplan \
+          -input=false \
+          -detailed-exitcode
+      continue-on-error: true
+      id: plan
+
+    - name: Generate Plan Output
+      working-directory: infra/tf
+      if: always()
+      run: |
+        terraform show -no-color dev.tfplan > dev.tfplan.txt 2>/dev/null || echo "No plan to show"
+
+    - name: Comment PR with Plan
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'infra/tf/dev.tfplan.txt';
+          
+          let plan = 'No plan output available';
+          try {
+            if (fs.existsSync(path)) {
+              plan = fs.readFileSync(path, 'utf8');
+              // Truncate if too long
+              if (plan.length > 60000) {
+                plan = plan.substring(0, 60000) + '\n\n... (truncated)';
+              }
+            }
+          } catch (error) {
+            plan = `Error reading plan: ${error.message}`;
+          }
+          
+          const body = `## Terraform Plan (Dev Environment)
+          
+          ### Plan Status
+          - Exit Code: ${{ steps.plan.outcome }}
+          - Changes: ${{ steps.plan.outputs.changes || 'Unknown' }}
+          
+          <details>
+          <summary>View Plan Details</summary>
+          
+          \`\`\`terraform
+          ${plan}
+          \`\`\`
+          
+          </details>
+          
+          > Plan generated on \`${new Date().toISOString()}\``;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
+
+    - name: Terraform Apply (Dev)
+      if: github.ref == 'refs/heads/develop' && github.event_name != 'pull_request' && steps.plan.outcome == 'success'
+      working-directory: infra/tf
+      run: terraform apply -input=false dev.tfplan
+
+    - name: Post-deployment Validation
+      if: github.ref == 'refs/heads/develop' && github.event_name != 'pull_request'
+      run: |
+        echo "Running post-deployment validation..."
+        
+        # Validate deployed resources
+        if [ -n "${{ vars.AKS_CLUSTER_NAME }}" ] && [ -n "${{ vars.RESOURCE_GROUP_NAME }}" ]; then
+          az aks show --name ${{ vars.AKS_CLUSTER_NAME }} --resource-group ${{ vars.RESOURCE_GROUP_NAME }} --output none
+          echo "✅ AKS cluster validated"
+        fi
+        
+        if [ -n "${{ vars.ACR_NAME }}" ] && [ -n "${{ vars.RESOURCE_GROUP_NAME }}" ]; then
+          az acr show --name ${{ vars.ACR_NAME }} --resource-group ${{ vars.RESOURCE_GROUP_NAME }} --output none
+          echo "✅ ACR validated"
+        fi
+
+    - name: Store Terraform Outputs
+      if: github.ref == 'refs/heads/develop' && github.event_name != 'pull_request'
+      working-directory: infra/tf
+      run: |
+        terraform output -json > terraform-outputs.json
+        echo "Terraform outputs stored"
+
+    - name: Upload Terraform Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-dev-${{ github.run_id }}
+        path: |
+          infra/tf/dev.tfplan
+          infra/tf/dev.tfplan.txt
+          infra/tf/terraform-outputs.json
+          reports/
+        retention-days: 30
+
+    - name: Workflow Summary
+      if: always()
+      run: |
+        echo "## Terraform Dev Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: dev" >> $GITHUB_STEP_SUMMARY
+        echo "- **Terraform Version**: $(terraform version | head -n1)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Plan Status**: ${{ steps.plan.outcome }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Deployment**: ${{ github.ref == 'refs/heads/develop' && github.event_name != 'pull_request' && 'Applied' || 'Plan Only' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Duration**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
