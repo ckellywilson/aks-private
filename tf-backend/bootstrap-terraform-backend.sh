@@ -8,8 +8,8 @@
 set -e
 
 # Configuration
-LOCATION="East US"
-LOCATION_SHORT="eus"
+LOCATION="East US"  # Default location - can be overridden with -l/--location parameter
+LOCATION_SHORT="eus"  # Will be auto-generated based on LOCATION
 SUBSCRIPTION_ID=""
 TENANT_ID=""
 RESOURCE_GROUP_NAME=""
@@ -58,8 +58,17 @@ Options:
 
 Examples:
   $0 dev -s 12345678-1234-1234-1234-123456789012
-  $0 staging -s 12345678-1234-1234-1234-123456789012 -t 87654321-4321-4321-4321-210987654321
-  $0 prod -s 12345678-1234-1234-1234-123456789012 -r custom-rg-name --dry-run
+  $0 staging -s 12345678-1234-1234-1234-123456789012 -l "Central US"
+  $0 prod -s 12345678-1234-1234-1234-123456789012 -l "West Europe" -r custom-rg-name
+  $0 dev -s 12345678-1234-1234-1234-123456789012 -l "East US 2" --dry-run
+
+Supported regions:
+  US: East US, East US 2, Central US, North Central US, South Central US, West US, West US 2, West Central US
+  Europe: North Europe, West Europe, France Central, Germany West Central, UK South, UK West
+  Asia: East Asia, Southeast Asia, Japan East, Japan West, Korea Central, Australia East
+  Other: Canada Central, Brazil South
+
+For unlisted regions, a short code will be auto-generated.
 EOF
 }
 
@@ -132,6 +141,19 @@ configure_public_storage() {
             --ip-address "$ip_range" \
             --output none || log_warning "Failed to add IP range: $ip_range"
     done
+    
+    # Add current IP address for container creation
+    CURRENT_IP=$(curl -s ifconfig.me)
+    if [[ -n "$CURRENT_IP" ]]; then
+        log_info "Adding current IP address ($CURRENT_IP) for container creation..."
+        az storage account network-rule add \
+            --account-name "$STORAGE_ACCOUNT_NAME" \
+            --ip-address "$CURRENT_IP" \
+            --output none || log_warning "Failed to add current IP: $CURRENT_IP"
+    fi
+    
+    # Wait for network rules to propagate
+    sleep 5
     
     # Create terraform state container
     az storage container create \
@@ -414,15 +436,54 @@ fi
 
 # Set location short code
 case $LOCATION in
+    # US Regions
     "East US") LOCATION_SHORT="eus" ;;
+    "East US 2") LOCATION_SHORT="eus2" ;;
     "Central US") LOCATION_SHORT="cus" ;;
+    "North Central US") LOCATION_SHORT="ncus" ;;
+    "South Central US") LOCATION_SHORT="scus" ;;
     "West US") LOCATION_SHORT="wus" ;;
     "West US 2") LOCATION_SHORT="wus2" ;;
+    "West Central US") LOCATION_SHORT="wcus" ;;
+    
+    # Europe Regions
     "North Europe") LOCATION_SHORT="neu" ;;
     "West Europe") LOCATION_SHORT="weu" ;;
+    "France Central") LOCATION_SHORT="frc" ;;
+    "France South") LOCATION_SHORT="frs" ;;
+    "Germany West Central") LOCATION_SHORT="dewc" ;;
+    "Germany North") LOCATION_SHORT="den" ;;
+    "UK South") LOCATION_SHORT="uks" ;;
+    "UK West") LOCATION_SHORT="ukw" ;;
+    "Switzerland North") LOCATION_SHORT="chn" ;;
+    "Switzerland West") LOCATION_SHORT="chw" ;;
+    
+    # Asia Pacific Regions
+    "East Asia") LOCATION_SHORT="ea" ;;
+    "Southeast Asia") LOCATION_SHORT="sea" ;;
+    "Japan East") LOCATION_SHORT="jpe" ;;
+    "Japan West") LOCATION_SHORT="jpw" ;;
+    "Korea Central") LOCATION_SHORT="krc" ;;
+    "Korea South") LOCATION_SHORT="krs" ;;
+    "Australia East") LOCATION_SHORT="aue" ;;
+    "Australia Southeast") LOCATION_SHORT="ause" ;;
+    "Australia Central") LOCATION_SHORT="auc" ;;
+    "Central India") LOCATION_SHORT="inc" ;;
+    "South India") LOCATION_SHORT="ins" ;;
+    "West India") LOCATION_SHORT="inw" ;;
+    
+    # Other Regions
+    "Canada Central") LOCATION_SHORT="cac" ;;
+    "Canada East") LOCATION_SHORT="cae" ;;
+    "Brazil South") LOCATION_SHORT="brs" ;;
+    "South Africa North") LOCATION_SHORT="zan" ;;
+    "UAE North") LOCATION_SHORT="aen" ;;
+    
     *) 
-        log_warning "Unknown location, using 'unk' as short code"
-        LOCATION_SHORT="unk"
+        log_warning "Unknown location '$LOCATION', generating short code automatically"
+        # Generate short code from location name (first 3-4 characters, lowercase, no spaces)
+        LOCATION_SHORT=$(echo "$LOCATION" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g' | cut -c1-4)
+        log_info "Generated location short code: $LOCATION_SHORT"
         ;;
 esac
 
@@ -437,7 +498,7 @@ log_info "Configuration:"
 log_info "  Environment: $ENVIRONMENT"
 log_info "  Subscription ID: $SUBSCRIPTION_ID"
 log_info "  Resource Group: $RESOURCE_GROUP_NAME"
-log_info "  Location: $LOCATION"
+log_info "  Location: $LOCATION ($LOCATION_SHORT)"
 log_info "  Storage Account: ${STORAGE_ACCOUNT_NAME_PREFIX}${ENVIRONMENT}${LOCATION_SHORT}001tfstate"
 log_info "  Dry Run: $DRY_RUN"
 
