@@ -42,6 +42,9 @@ Eraser.io is a powerful diagramming tool that uses generative AI to create infra
 ### High-Level Architecture Overview
 - [`13-high-level-aks-architecture-overview.md`](./13-high-level-aks-architecture-overview.md) - Executive-level overview with primary components: Private AKS cluster (2 system + 2 user node pools), nginx-ingress load balancer, ACR with private link, Application Gateway, Infoblox DNS, and GitHub Actions CI/CD. Includes specific IP addresses and DNS A records.
 
+### Simplified Architecture
+- [`14-simplified-aks-private-cluster.md`](./14-simplified-aks-private-cluster.md) - Streamlined single application landing zone architecture focused on production only. Consolidated VNet design without hub-spoke complexity, core components, and simplified network topology for straightforward implementation.
+
 ## Best Practices for Eraser.io
 
 ### Prompt Structure
